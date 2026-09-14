@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-15T02:45:20.3734765+08:00",
+  "compiler": "g++ 15.2.0 (MSYS2 MinGW-w64 x64)",
+  "configuration": "Debug",
+  "command": ".\\scripts\\build-mingw.ps1 -RunTests -RunDemo",
+  "exit_code": 0,
+  "build_warnings": 0,
+  "ctest_registered": 1,
+  "ctest_passed": 1,
+  "hot_replacements_tested": 20,
+  "demo_accepted": 43,
+  "demo_completed": 43,
+  "demo_dropped": 0,
+  "linux_verified": false,
+  "real_bus_verified": false,
+  "files": [
+    {
+      "path": "build-gcc-debug/bin/bus_backend.exe",
+      "sha256": "b9d7748b9416db344bdb422262b4318bb73c61b37527c109dc22e61fa27ab571"
+    },
+    {
+      "path": "build-gcc-debug/bin/bus_replay.dll",
+      "sha256": "149432cdeb6fe51dc4c62ededbc14cc96de7f01ce7b6ff476a45cfd62633f039"
+    },
+    {
+      "path": "build-gcc-debug/bin/bus_simulated.dll",
+      "sha256": "e0b66f9c8bcb5fbe22a57768bba2630dd8089abf1c747450caa3fa84a195a218"
+    },
+    {
+      "path": "build-gcc-debug/build.log",
+      "sha256": "cfd1288dc227e196381e518ff5ff228e8cfbfb71af4eec86c60a794668e1634a"
+    },
+    {
+      "path": "build-gcc-debug/demo.log",
+      "sha256": "6664df09ca2d595d76f9aef94ac8ef89820787a414f8522a642447735e4f1758"
+    },
+    {
+      "path": "build-gcc-debug/test.log",
+      "sha256": "66cc6bc0e2235d4959ea5ab2a8759d65189e9e7fca09d8006fd38de298ff80ac"
+    },
+    {
+      "path": "CMakeLists.txt",
+      "sha256": "b3b50530240804761c3632aa49f6910ada8fdef1d689c291942c2deb646be79c"
+    },
+    {
+      "path": "include/core/analysis.hpp",
+      "sha256": "b646ff6361da073c292997e45428c5cedd89ef0a70600af8040ec6591b71ef5b"
+    },
+    {
+      "path": "include/core/archive.hpp",
+      "sha256": "2599717a21d0f0144e5afdcc3b2eb1be724be6b8175ff94651649aaf3c0ffc59"
+    },
+    {
+      "path": "include/core/bus_manager.hpp",
+      "sha256": "962f7b78f9ac0ea4af3eb6bf60797945ae3b3a5b7ca945395e1710934427b063"
+    },
+    {
+      "path": "include/core/decoder_registry.hpp",
+      "sha256": "cab907c19a749b0e2288ea47670e839a05ac4534a5ebef9a0e18cbce17c7473e"
+    },
+    {
+      "path": "include/core/frame_pipeline.hpp",
+      "sha256": "609cd1de5558d7b8bc9bea3f33566061aba094994a8931b170754c38584b0b64"
+    },
+    {
+      "path": "include/core/path.hpp",
+      "sha256": "5cb9f54252870b9e586e72adddf1cedaf1c1e46445fb5379e3b9fdc4e1494bc4"
+    },
+    {
+      "path": "include/core/plugin_manager.hpp",
+      "sha256": "f00dc4e7c7b96e5dee9841023eff9921623f6bf24ccf6d86f0df613c90975f93"
+    },
+    {
+      "path": "include/core/shared_library.hpp",
+      "sha256": "a74879ddffa380cb955ab66dfc13a0c1d3528b79386ad0a9125425b25353e4f6"
+    },
+    {
+      "path": "include/core/types.hpp",
+      "sha256": "00d4788a3d7537cac781da316daa6bd3d771bd2445842ec7532cceeff0e4959e"
+    },
+    {
+      "path": "include/plugin_api/bus_plugin.h",
+      "sha256": "bc98e141e7f1c67a4e3c7e4dea722da5e3ae0631de6849af7a0daae2442dda8e"
+    },
+    {
+      "path": "include/plugin_api/plugin_support.hpp",
+      "sha256": "776fe6d5ea44fb8fd99d83625ed58f73b5d8ddd2d6d3098197a074a21f2aa5bf"
+    },
+    {
+      "path": "plugins/replay/replay_plugin.cpp",
+      "sha256": "49fa5efa14898c0a88ca7d6802b2b17319e9d7d1c13a2ab044de461a36a96997"
+    },
+    {
+      "path": "plugins/simulated/simulated_plugin.cpp",
+      "sha256": "62c53d5fdf5f6313edd32a370e6a19a7e0399736f625316555e7d15e61fd2d88"
+    },
+    {
+      "path": "runs/demo_159350219620700.avbus",
+      "sha256": "e41dd2d785038f7e1b22d51db64f25904f41c3d633a2124f5d470653f494bea1"
+    },
+    {
+      "path": "scripts/build-mingw.ps1",
+      "sha256": "22a1a6da29b317a7207ea952cfefeb5618db6a562351cc20d60766abbb0e66ff"
+    },
+    {
+      "path": "src/analysis/rule_analyzer.cpp",
+      "sha256": "a26383d0d750cd52059264f299c90f11d1f7f45aa1ed60bd31dca57977ba1994"
+    },
+    {
+      "path": "src/bus/bus_manager.cpp",
+      "sha256": "96a1c4c72ceb4d3e0877a63b7f1be5091afe7db12bc4f0d9512e15637cbd5018"
+    },
+    {
+      "path": "src/decoder/simulated_decoder.cpp",
+      "sha256": "76ce0214f72809d2b80d13826d0c17decaf349a3026473be193a9cd0b0b835b9"
+    },
+    {
+      "path": "src/main.cpp",
+      "sha256": "eab54e4a334be4a683f848519f027efa05e8c3d96047a24ae4120cd35a6dceed"
+    },
+    {
+      "path": "src/pipeline/frame_pipeline.cpp",
+      "sha256": "1f68a713722fa4e8fcc040c64d70c006dd34e2bccb339ed12a4d719d8d11fb17"
+    },
+    {
+      "path": "src/platform/shared_library.cpp",
+      "sha256": "b909256acfec26300e3f55eb0a447e69891b595e39700b51d51619f69d73f174"
+    },
+    {
+      "path": "src/plugin/plugin_manager.cpp",
+      "sha256": "63782541246a21a647610291f7589a44e4028b5e3e1b6853b21f462a95bfac72"
+    },
+    {
+      "path": "src/storage/archive.cpp",
+      "sha256": "61d83abd402faded2581bc8e93122e1fa9ebac475d807e97c0fed4c53a09ed99"
+    },
+    {
+      "path": "tests/c_header_check.c",
+      "sha256": "35014900d411e4bbfdb2641728e5b0d773dc078ba6de9bae300ab1f0242bfe55"
+    },
+    {
+      "path": "tests/incompatible_plugin.cpp",
+      "sha256": "5a97009813ad68bbc5dad28c27981e0e24c01e8a96003ce4c9ecf801768b2fd5"
+    },
+    {
+      "path": "tests/integration.cpp",
+      "sha256": "9d5a071697196af4dce1754ecf113b05988f6718a539d3cc10f001d81580cfab"
+    }
+  ]
+}

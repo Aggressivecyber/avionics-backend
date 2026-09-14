@@ -1,0 +1,3 @@
+# Documentation example; copy values into CLI add/replace commands.
+# v0.1 does not load a standalone application configuration file.
+period_ms=10;initial_milli=20000;step_milli=100;channel=0

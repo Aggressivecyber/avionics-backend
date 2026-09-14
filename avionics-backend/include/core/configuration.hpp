@@ -1,0 +1,54 @@
+#pragma once
+#include "core/frame_pipeline.hpp"
+#include <optional>
+
+namespace avionics {
+enum class FieldType { Signed, Unsigned, Float64, Boolean, Enumeration };
+struct FieldDefinition {
+    std::string id, source, unit;
+    std::uint32_t protocol{}, channel{}, bit_offset{}, bit_width{};
+    bool big_endian{};
+    FieldType type{};
+    double scale{1}, offset{};
+    std::optional<std::uint32_t> valid_bit;
+    std::map<std::int64_t, std::string> enum_values;
+    std::uint64_t max_age_ns{}, sequence_step{};
+};
+struct ClockDefinition {
+    std::string source, group;
+    std::uint32_t domain{};
+    std::int64_t offset_ns{};
+    std::uint64_t uncertainty_ns{};
+};
+struct Selector {
+    std::string source, parameter;
+    bool matches(const ParameterSample& sample) const { return source == sample.source && parameter == sample.parameter_id; }
+};
+struct ConsistencyDefinition {
+    std::string id;
+    Selector left, right;
+    double tolerance{};
+    std::uint64_t window_ns{};
+};
+struct ResponseDefinition {
+    std::string id;
+    Selector command, response;
+    double command_threshold{}, response_threshold{};
+    std::uint64_t max_delay_ns{};
+};
+struct BackendConfiguration {
+    std::string version;
+    std::vector<FieldDefinition> fields;
+    std::vector<ClockDefinition> clocks;
+    std::vector<ConsistencyDefinition> consistency;
+    std::vector<ResponseDefinition> responses;
+    static BackendConfiguration load(const std::filesystem::path&);
+};
+class DictionaryDecoder final : public IParameterDecoder {
+public:
+    explicit DictionaryDecoder(BackendConfiguration configuration) : config_(std::move(configuration)) {}
+    std::vector<ParameterSample> decode(const RawFrame&) override;
+private:
+    BackendConfiguration config_;
+};
+}
