@@ -27,7 +27,10 @@ add_library(bus_core STATIC
     src/decoder/dictionary_decoder.cpp
     src/analysis/processing.cpp
     src/storage/jsonl_analysis.cpp
-    src/analysis/rule_analyzer.cpp)
+    src/analysis/rule_analyzer.cpp
+    src/protocol/protocols.cpp
+    src/protocol/protocol_router.cpp
+    src/protocol/protocol_pipeline.cpp)
 target_link_libraries(bus_core PUBLIC bus_archive project_options Threads::Threads ${CMAKE_DL_LIBS})
 
 function(add_bus_plugin name source)
@@ -45,6 +48,8 @@ add_executable(bus_backend src/main.cpp)
 target_link_libraries(bus_backend PRIVATE bus_core)
 add_executable(bus_analyze src/analyze_main.cpp)
 target_link_libraries(bus_analyze PRIVATE bus_core)
+add_executable(bus_protocol src/protocol/protocol_main.cpp)
+target_link_libraries(bus_protocol PRIVATE bus_core)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -65,4 +70,10 @@ if(BUILD_TESTING)
     add_executable(protocol_contract_tests tests/protocol_contract.cpp)
     target_link_libraries(protocol_contract_tests PRIVATE bus_core)
     add_test(NAME protocol_contract COMMAND protocol_contract_tests)
+    add_executable(protocol_runtime_tests tests/protocol_runtime.cpp)
+    target_link_libraries(protocol_runtime_tests PRIVATE bus_core)
+    add_test(NAME protocol_runtime COMMAND protocol_runtime_tests)
+    set_tests_properties(protocol_runtime PROPERTIES TIMEOUT 30)
+    add_test(NAME protocol_cli COMMAND bus_protocol --demo)
+    set_tests_properties(protocol_cli PROPERTIES TIMEOUT 30)
 endif()
