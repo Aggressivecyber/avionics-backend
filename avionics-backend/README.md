@@ -4,7 +4,7 @@
 
 当前没有可视化、HTTP 服务或真实采集卡依赖。Windows/MinGW 的 g++ 15.2 已编译验证；POSIX 动态库加载代码已提供，Linux 构建尚未实测。
 
-新增了面向多来源、多通道的[协议扩展抽象接口](docs/protocol-abstractions.md)：约定默认自动识别，也支持手动指定协议；通过继承接入现有 `IParameterDecoder`。本次完成接口、数据类型和契约测试，具体识别器、路由器与协议解析器尚未实现，现有运行程序仍按报文中已知的协议编号分派。
+新增了面向多来源、多通道的[协议扩展抽象接口](docs/protocol-abstractions.md)：约定默认自动识别，也支持手动指定协议；通过继承接入现有 `IParameterDecoder`。在其上补齐了[协议运行时](docs/protocol-runtime.md)：两种内置协议、自动识别算法、运行时路由器、消息解码器、管线接入和命令行入口。现有运行程序默认仍按报文中已知的协议编号分派；`bus_protocol` 用于运行期检查协议识别。
 
 ## 已实现
 
@@ -22,6 +22,9 @@
 - 显式时钟偏移与误差范围，标记未映射时钟、重复、序号缺口、乱序和无效数据。
 - 双参数一致性比较与指令上升沿—响应上升沿的延迟分析；区分超时、观测缺口、时序不确定、取消和未完成。
 - 参数和分析事件输出 JSONL，保留原始报文编号及配置副本。在线配置模式和离线分析使用同一处理对象。
+- 两种内置协议的探测、解析与工厂：奇校验 32 位字和 CRC-16 分帧字节流。
+- 运行时路由器：默认按内容自动识别，支持按来源/通道手动指定和可信来源提示，遵守观察预算和候选上限，按来源、通道、代次和回放原来源隔离；坏帧不切换协议。
+- 消息解码器和 `IProtocolPipelineDecoder` 接入，将已校验协议消息映射为工程参数；可通过 `bus_protocol` 检查路由决定。
 
 ## 快速构建：当前 Windows 环境
 
@@ -42,6 +45,7 @@ build-gcc-debug/bin/bus_backend.exe
 build-gcc-debug/bin/bus_simulated.dll
 build-gcc-debug/bin/bus_replay.dll
 build-gcc-debug/bin/bus_analyze.exe
+build-gcc-debug/bin/bus_protocol.exe
 build-gcc-debug/build.log
 build-gcc-debug/test.log
 build-gcc-debug/demo.log
@@ -74,6 +78,23 @@ $env:PATH = 'C:\msys64\mingw64\bin;' + $env:PATH
 这会在 `runs/session_002.avbus.analysis/` 写入参数和结果。按配置示例创建 `control`、`feedback`、`sensor_a`、`sensor_b` 实例时可匹配各自参数；名称不匹配的报文仍会被记录，但不产生配置参数。`stats` 和 `events` 可查询当前处理情况。当前字典在启动时加载，修改配置需重新启动分析会话；总线插件实例的热替换仍可运行中执行。
 
 详细字段定义和结果语义见 [v0.2 参数与关联设计](docs/processing-v0.2.md)。这个文件是我们自己的字典格式，需要将设备 ICD 转录并核对后使用，不是直接导入任意厂家 ICD 的通用解释器。
+
+## 协议识别与路由检查
+
+`bus_protocol` 用内置协议运行期检查识别和路由决定。生成样例流并逐条打印结果：
+
+```powershell
+.\build-gcc-debug\bin\bus_protocol.exe --demo
+```
+
+对已有归档逐条路由并汇总：
+
+```powershell
+.\build-gcc-debug\bin\bus_protocol.exe runs/session.avbus
+.\build-gcc-debug\bin\bus_protocol.exe runs/session.avbus --source capture_a --channel 0 --manual 65537
+```
+
+选项包括 `--source`、`--channel`、`--manual ID`、`--representation REP`、`--hint ID` 和 `--authoritative`；不指定 `--source` 时配置作用于遇到的每个地址。该工具不改变 `bus_backend` 和 `bus_analyze` 的默认行为。协议实现和路由语义见[协议运行时](docs/protocol-runtime.md)。
 
 另提供可选的 Python 标准库验收脚本 `python scripts/verify_live_roundtrip.py`，验证公开命令接口、运行中换插件，以及在线与离线 JSONL 逐字节一致。它不是后端运行或 CMake/CTest 的依赖。
 
@@ -146,6 +167,6 @@ status replay_a
 
 插件在同一进程运行，因此不隔离驱动崩溃；C ABI 解决接口与所有权边界，不承诺任意编译器、架构或系统之间二进制通用。支持软件插件切换不等于设备支持带电插拔。
 
-下一步可确定一种真实总线及其采集卡 SDK，并核对其设备 ICD、参数更新周期和时钟语义。后续平台接入可以围绕现有配置、参数流和分析对象添加 API。
+协议运行时已补齐识别、路由、解析和命令行入口，但内置的两种协议是软件侧组帧与校验，不是设备 ICD 或总线物理层实现；`bus_backend` 默认数据路径也仍按报文中已知协议编号分派。下一步可确定一种真实总线及其采集卡 SDK，按厂家 ICD 派生子协议实现，并核对其参数更新周期和时钟语义。后续平台接入可以围绕现有配置、参数流和分析对象添加 API。
 
 详细设计见 [架构说明](docs/architecture.md)、[插件开发约定](docs/plugin-contract.md) 和 [v0.2 验证记录](docs/verification-v0.2.md)。初版来源快照已保存到 `snapshots/`，原 [v0.1 验证记录](docs/verification.md) 作为历史保留。

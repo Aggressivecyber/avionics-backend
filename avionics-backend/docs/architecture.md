@@ -2,7 +2,7 @@
 
 当前为 v0.2。在原有总线插件和原始报文管线上，新增配置化解码、显式时间映射、质量处理、一致性和指令响应分析。详细语义见 [参数与关联设计](processing-v0.2.md)。无配置模式保留初版的模拟温度示例。
 
-后续多协议接入的抽象类与自动/手动选择契约见[协议扩展抽象接口](protocol-abstractions.md)。这些接口已编译验证，尚未接入下方运行链路。
+后续多协议接入的抽象类与自动/手动选择契约见[协议扩展抽象接口](protocol-abstractions.md)，其具体实现、路由与命令行入口见[协议运行时](protocol-runtime.md)。协议运行时作为可选解码器接入现有 `IParameterDecoder` 位置，默认运行程序仍使用按协议编号分派的 `DecoderRegistry`。
 
 ## 模块结构
 
@@ -31,6 +31,11 @@ flowchart LR
 | `RuleAnalyzer` | `src/analysis/rule_analyzer.cpp` | 有限内存历史、阈值事件和证据索引 |
 | `BackendConfiguration` | `include/core/configuration.hpp` | 严格加载本项目 INI 字典与时钟、规则配置 |
 | `DictionaryDecoder` | `src/decoder/dictionary_decoder.cpp` | 按位提取、编码与缩放、类型和有效性转换 |
+| `BuiltinProtocolFactory` | `src/protocol/protocols.cpp` | 内置协议描述、探测器与解析器的创建 |
+| `ProtocolRouter` | `src/protocol/protocol_router.cpp` | 自动/手动选择、观察与候选预算、按地址/代次隔离、重置与移除 |
+| `DictionaryMessageDecoder` | `src/protocol/protocol_pipeline.cpp` | 已校验协议消息到工程参数的字典映射 |
+| `ProtocolPipelineDecoder` | `src/protocol/protocol_pipeline.cpp` | 组合路由器与消息解码器，接入 `IParameterDecoder` |
+| `bus_protocol` | `src/protocol/protocol_main.cpp` | 命令行协议识别与路由检查 |
 | `TimeQualityProcessor` | `include/core/processing.hpp` | 显式偏移映射、误差界、序号与时间质量 |
 | `ProcessingService` | `src/analysis/processing.cpp` | 有限窗口一致性与指令响应分析，规则状态和水位 |
 | `JsonlAnalysisSink` | `src/storage/jsonl_analysis.cpp` | 参数与带证据引用的分析结果持久化 |
