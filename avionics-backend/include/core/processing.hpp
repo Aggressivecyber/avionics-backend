@@ -28,6 +28,8 @@ struct ProcessingStats {
 class TimeQualityProcessor {
 public:
     explicit TimeQualityProcessor(std::vector<ClockDefinition> clocks) : clocks_(std::move(clocks)) {}
+    // Non-mutating clock mapping used to order samples before quality checks.
+    AlignedSample align(const ParameterSample&) const;
     AlignedSample process(const ParameterSample&);
 private:
     std::vector<ClockDefinition> clocks_;
@@ -65,15 +67,27 @@ private:
     struct ResponseState {
         std::optional<AlignedSample> command, response, pending;
     };
+    struct FusionState {
+        std::vector<std::deque<AlignedSample>> history;
+    };
     void processConsistency(const AlignedSample&);
     void processResponse(const AlignedSample&);
+    void processFusion(const AlignedSample&);
     void expire(const std::string& group, std::uint64_t time_ns, bool inclusive);
     void emit(CorrelationResult);
+    void deliver(AlignedSample);
+    void applyDedup(AlignedSample&);
+    void releaseReady(const std::string& group, bool force);
     BackendConfiguration config_;
     TimeQualityProcessor quality_;
     std::shared_ptr<IAnalysisSink> sink_;
     std::vector<PairState> pairs_;
     std::vector<ResponseState> responses_;
+    std::vector<FusionState> fusions_;
+    std::map<std::string, std::uint64_t> reorder_windows_;
+    std::map<std::string, std::multimap<std::uint64_t, ParameterSample>> reorder_buffers_;
+    std::map<std::string, std::uint64_t> reorder_max_;
+    std::vector<std::optional<std::uint64_t>> dedup_last_;
     std::map<std::string, std::uint64_t> watermarks_;
     std::deque<CorrelationResult> history_;
     ProcessingStats stats_;

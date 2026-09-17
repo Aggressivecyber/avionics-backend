@@ -30,6 +30,14 @@ template<class T> T number(const std::string& text) {
     if constexpr (std::is_floating_point_v<T>) if (!std::isfinite(value)) throw std::invalid_argument("nonfinite config value");
     return value;
 }
+std::uint32_t hexadecimal(std::string text) {
+    if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X')) text.erase(0, 2);
+    std::uint32_t value{};
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value, 16);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
+        throw std::invalid_argument("invalid hexadecimal value: " + text);
+    return value;
+}
 std::uint64_t milliseconds(const std::string& text) {
     const auto value = number<std::uint64_t>(text);
     if (value > 86400000) throw std::invalid_argument("duration exceeds 24 hours");
@@ -99,6 +107,18 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
             field.max_age_ns = milliseconds(take(values, "max_age_ms"));
             field.sequence_step = number<std::uint64_t>(take(values, "sequence_step", "0"));
             if (values.contains("valid_bit")) field.valid_bit = number<std::uint32_t>(take(values, "valid_bit"));
+            if (values.contains("nominal_period_ns")) field.nominal_period_ns = number<std::uint64_t>(take(values, "nominal_period_ns"));
+            if (values.contains("phase_offset_ns")) field.phase_offset_ns = number<std::uint64_t>(take(values, "phase_offset_ns"));
+            if (values.contains("epoch_ns")) field.epoch_ns = number<std::uint64_t>(take(values, "epoch_ns"));
+            if (values.contains("jitter_tolerance_ns")) field.jitter_tolerance_ns = number<std::uint64_t>(take(values, "jitter_tolerance_ns"));
+            if (values.contains("arrival_delay_tolerance_ns")) field.arrival_delay_tolerance_ns = number<std::uint64_t>(take(values, "arrival_delay_tolerance_ns"));
+            if (values.contains("can_id")) field.can_id = hexadecimal(take(values, "can_id"));
+            if (values.contains("match_offset") || values.contains("match_value")) {
+                if (!values.contains("match_offset") || !values.contains("match_value"))
+                    throw std::invalid_argument("CAN match requires both match_offset and match_value");
+                field.can_match = {number<std::uint32_t>(take(values, "match_offset")),
+                    number<std::uint32_t>(take(values, "match_value"))};
+            }
             if (field.type == FieldType::Enumeration) {
                 std::istringstream items(take(values, "enum_values")); std::string item;
                 while (std::getline(items, item, ',')) {
@@ -125,6 +145,12 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
                     if (static_cast<std::uint64_t>(code) >= (1ull << field.bit_width)) throw std::invalid_argument("enum code exceeds width");
                 }
             }
+            if (field.can_id) {
+                if (std::uint64_t(field.bit_offset) + field.bit_width > 64ull)
+                    throw std::invalid_argument("CAN signal exceeds the 8-byte data field");
+                if (field.can_match && (field.can_match->first >= 8 || field.can_match->second > 255))
+                    throw std::invalid_argument("CAN match offset/value out of range");
+            }
             field_ids.insert(id); config.fields.push_back(std::move(field));
         } else if (type == "clock") {
             ClockDefinition clock; clock.source = id;
@@ -148,6 +174,37 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
             rule.max_delay_ns = milliseconds(take(values, "max_delay_ms"));
             if (!rule.max_delay_ns) throw std::invalid_argument("response window must be positive");
             config.responses.push_back(std::move(rule));
+        } else if (type == "reorder") {
+            ReorderDefinition definition; definition.group = id;
+            definition.window_ns = milliseconds(take(values, "window_ms"));
+            if (!definition.window_ns) throw std::invalid_argument("reorder window must be positive");
+            config.reorder.push_back(std::move(definition));
+        } else if (type == "dedup") {
+            DeduplicationDefinition definition; definition.id = id;
+            definition.source = take(values, "source");
+            definition.parameter = take(values, "parameter");
+            definition.window_ns = milliseconds(take(values, "window_ms"));
+            if (!definition.window_ns) throw std::invalid_argument("dedup window must be positive");
+            config.dedup.push_back(std::move(definition));
+        } else if (type == "fusion") {
+            FusionDefinition definition; definition.id = id;
+            const auto count = number<std::size_t>(take(values, "count"));
+            if (count < 2 || count > 16) throw std::invalid_argument("fusion requires 2..16 channels");
+            for (std::size_t index = 1; index <= count; ++index) {
+                FusionChannel channel;
+                channel.source = take(values, "source_" + std::to_string(index));
+                channel.parameter = take(values, "parameter_" + std::to_string(index));
+                definition.channels.push_back(std::move(channel));
+            }
+            const auto method = take(values, "method");
+            if (method == "mean") definition.method = FusionMethod::Mean;
+            else if (method == "median") definition.method = FusionMethod::Median;
+            else if (method == "vote") definition.method = FusionMethod::Vote;
+            else throw std::invalid_argument("unsupported fusion method: " + method);
+            definition.tolerance = number<double>(take(values, "tolerance"));
+            definition.window_ns = milliseconds(take(values, "window_ms"));
+            if (definition.tolerance < 0 || !definition.window_ns) throw std::invalid_argument("invalid fusion rule");
+            config.fusion.push_back(std::move(definition));
         } else throw std::invalid_argument("unknown section type: " + type);
         empty(values);
     }
@@ -162,6 +219,19 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
     };
     for (const auto& rule : config.consistency) { validate_selector(rule.left); validate_selector(rule.right); distinct(rule.left, rule.right); }
     for (const auto& rule : config.responses) { validate_selector(rule.command); validate_selector(rule.response); distinct(rule.command, rule.response); }
+    for (const auto& definition : config.reorder) {
+        bool known = false;
+        for (const auto& clock : config.clocks) if (clock.group == definition.group) { known = true; break; }
+        if (!known) throw std::invalid_argument("reorder refers to unknown clock group: " + definition.group);
+    }
+    for (const auto& definition : config.dedup) validate_selector(Selector{definition.source, definition.parameter});
+    for (const auto& rule : config.fusion) {
+        for (const auto& channel : rule.channels) validate_selector(Selector{channel.source, channel.parameter});
+        for (std::size_t a = 0; a < rule.channels.size(); ++a)
+            for (std::size_t b = a + 1; b < rule.channels.size(); ++b)
+                if (rule.channels[a].source == rule.channels[b].source && rule.channels[a].parameter == rule.channels[b].parameter)
+                    throw std::invalid_argument("fusion channels must be distinct");
+    }
     return config;
 }
 }

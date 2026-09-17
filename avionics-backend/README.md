@@ -4,7 +4,7 @@
 
 当前没有可视化、HTTP 服务或真实采集卡依赖。Windows/MinGW 的 g++ 15.2 已编译验证；POSIX 动态库加载代码已提供，Linux 构建尚未实测。
 
-新增了面向多来源、多通道的[协议扩展抽象接口](docs/protocol-abstractions.md)：约定默认自动识别，也支持手动指定协议；通过继承接入现有 `IParameterDecoder`。本次完成接口、数据类型和契约测试，具体识别器、路由器与协议解析器尚未实现，现有运行程序仍按报文中已知的协议编号分派。
+新增了面向多来源、多通道的[协议扩展抽象接口](docs/protocol-abstractions.md)：约定默认自动识别，也支持手动指定协议；通过继承接入现有 `IParameterDecoder`。在其上补齐了[协议运行时](docs/protocol-runtime.md)：两种内置协议、自动识别算法、运行时路由器、消息解码器、管线接入和命令行入口。现有运行程序默认仍按报文中已知的协议编号分派；`bus_protocol` 用于运行期检查协议识别。
 
 ## 已实现
 
@@ -21,7 +21,15 @@
 - INI 参数字典：按来源、协议与通道选择字段，支持位提取、大小端、整数、浮点、布尔、枚举、比例与偏置、有效位。
 - 显式时钟偏移与误差范围，标记未映射时钟、重复、序号缺口、乱序和无效数据。
 - 双参数一致性比较与指令上升沿—响应上升沿的延迟分析；区分超时、观测缺口、时序不确定、取消和未完成。
+- 有界重排缓冲按映射时间排序后再做质量检查，修正同一时基组内的到达乱序；冗余去重按来源/参数和时间窗抑制重复样本并保留记录。
+- 多源统计融合：把 2~16 路来源按时间窗口对齐后合并为一个值，支持 `mean`/`median`/`vote`；各源分歧超过容差时给出 `fused_divergence`，并保留全部证据。
+- 字典参数可按 CAN 标识符（和匹配字节）从抓包 CAN 帧的数据字节解码，用于真实 CAN 日志；示例 `config/obd-can.ini` 用公开的 OBD-II 标准编码。
+- 面向下游分析的扁平导出 `bus_export`：每条观测一行的 CSV/JSONL，含统一时间语义与 `ok/expected_absent/invalid/not_due` 状态，接口规范见 [interface-for-analysis.md](docs/interface-for-analysis.md)。
 - 参数和分析事件输出 JSONL，保留原始报文编号及配置副本。在线配置模式和离线分析使用同一处理对象。
+- 五种内置协议的探测、解析与工厂：ARINC 429 字、MIL-STD-1553B 字、CAN 2.0 帧、抓包 CAN（无线上 CRC，贴近真实总线日志）和 CRC-16 分帧字节流。
+- 运行时路由器：默认按内容自动识别，支持按来源/通道手动指定和可信来源提示，遵守观察预算和候选上限，按来源、通道、代次和回放原来源隔离；坏帧不切换协议。
+- 消息解码器和 `IProtocolPipelineDecoder` 接入，将已校验协议消息映射为工程参数；可通过 `bus_protocol` 检查路由决定。
+- 可配置的随机数据源插件 `bus_random`，用 `random=0|1` 切换确定性递增值或随机值，用于演示和压力测试。
 
 ## 快速构建：当前 Windows 环境
 
@@ -42,6 +50,7 @@ build-gcc-debug/bin/bus_backend.exe
 build-gcc-debug/bin/bus_simulated.dll
 build-gcc-debug/bin/bus_replay.dll
 build-gcc-debug/bin/bus_analyze.exe
+build-gcc-debug/bin/bus_protocol.exe
 build-gcc-debug/build.log
 build-gcc-debug/test.log
 build-gcc-debug/demo.log
@@ -73,7 +82,99 @@ $env:PATH = 'C:\msys64\mingw64\bin;' + $env:PATH
 
 这会在 `runs/session_002.avbus.analysis/` 写入参数和结果。按配置示例创建 `control`、`feedback`、`sensor_a`、`sensor_b` 实例时可匹配各自参数；名称不匹配的报文仍会被记录，但不产生配置参数。`stats` 和 `events` 可查询当前处理情况。当前字典在启动时加载，修改配置需重新启动分析会话；总线插件实例的热替换仍可运行中执行。
 
+配置还可包含按时间组的重排缓冲和按参数的去重：
+
+```ini
+[reorder host]
+window_ms=20
+
+[dedup temperature]
+source=sensor_a
+parameter=temperature_a
+window_ms=10
+```
+
+`[reorder <group>]` 的 group 必须是某条 `[clock]` 声明的 group，窗口内到达的乱序样本先排序再处理；`[dedup <id>]` 的来源/参数必须能被字典匹配，窗口内重复的样本标记 `duplicate` 且不参与关联。两者都保留原始记录。
+
+多源融合按窗口把各来源的最近样本对齐后合并：
+
+```ini
+[fusion attitude]
+count=3
+source_1=sensor_a
+parameter_1=pitch_a
+source_2=sensor_b
+parameter_2=pitch_b
+source_3=sensor_c
+parameter_3=pitch_c
+method=median        # mean | median | vote
+tolerance=0.5
+window_ms=20
+```
+
+各来源通道必须互不相同且能被字典匹配；方法为 `mean`（平均）、`median`（中位数）或 `vote`（与容差无关的多数表决，取值按四舍五入后投票，票数持平不产生结果）。全部分歧在容差内输出 `fused`（metric 为融合值），否则输出 `fused_divergence`。
+
+抓包 CAN 帧可按标识符（和某个匹配字节）解码数据：
+
+```ini
+[parameter vehicle_speed]
+source=vw
+protocol=65541       # 抓包 CAN(canlog)
+channel=1
+can_id=7E8           # 十六进制标识符
+match_offset=2       # 可选：数据字节索引
+match_value=13       # 可选：该字节必须等于的值（OBD-II PID 0x0D）
+bit_offset=24        # 相对 CAN 数据字节，不是整条帧
+bit_width=8
+byte_order=big
+type=unsigned
+unit=km/h
+max_age_ms=500
+sequence_step=0
+```
+
+`can_id` 与可选的 `match_offset`/`match_value` 把同一来源/通道下不同 CAN ID（和 PID）区分开；位偏移相对数据字节。`config/obd-can.ini` 是真实车辆 OBD-II 日志的完整示例（公开标准编码，非厂家 ICD）。
+
+参数还可声明更新周期用于导出状态判定（缺省表示未知，不猜测）：
+
+```ini
+[parameter engine_rpm]
+# ... 省略来源/位定义 ...
+nominal_period_ns=20000000   # 申报周期（纳秒）
+epoch_ns=1000000000          # 可选：槽位锚点；缺省以首次观测为锚
+jitter_tolerance_ns=1000000      # 可选：抖动容差
+arrival_delay_tolerance_ns=0     # 可选：到达延迟容差
+```
+
+## 面向分析的数据接口
+
+`bus_export` 把一段记录导出为下游分析可直接读取的扁平文件，并附带状态与时间语义：
+
+```powershell
+.\build-gcc-debug\bin\bus_export.exe config\correlation-demo.ini runs\session.avbus runs\session_export
+python examples\read_flat.py runs\session_export
+```
+
+产物：`parameters_flat.csv`、`parameters_flat.jsonl`、`export_metadata.json`、`configuration.ini`。字段字典、时间语义（`observation ≤ ingest ≤ available`）、状态判定规则（`ok/expected_absent/invalid/not_due/unknown_schedule`、`off_schedule` 标记）、跨文件 `raw_reference` 与稳定性承诺见 [interface-for-analysis.md](docs/interface-for-analysis.md)。原有 `parameters.jsonl`/`events.jsonl` 不变。
+
 详细字段定义和结果语义见 [v0.2 参数与关联设计](docs/processing-v0.2.md)。这个文件是我们自己的字典格式，需要将设备 ICD 转录并核对后使用，不是直接导入任意厂家 ICD 的通用解释器。
+
+## 协议识别与路由检查
+
+`bus_protocol` 用内置协议运行期检查识别和路由决定。生成样例流并逐条打印结果：
+
+```powershell
+.\build-gcc-debug\bin\bus_protocol.exe --demo
+```
+
+对已有归档逐条路由并汇总：
+
+```powershell
+.\build-gcc-debug\bin\bus_protocol.exe runs/session.avbus
+.\build-gcc-debug\bin\bus_protocol.exe runs/session.avbus --source capture_a --channel 0 --manual 65537
+```
+
+选项包括 `--source`、`--channel`、`--manual ID`、`--representation REP`、`--hint ID` 和 `--authoritative`；不指定 `--source` 时配置作用于遇到的每个地址。该工具不改变 `bus_backend` 和 `bus_analyze` 的默认行为。协议实现和路由语义见[协议运行时](docs/protocol-runtime.md)。
 
 另提供可选的 Python 标准库验收脚本 `python scripts/verify_live_roundtrip.py`，验证公开命令接口、运行中换插件，以及在线与离线 JSONL 逐字节一致。它不是后端运行或 CMake/CTest 的依赖。
 
@@ -138,14 +239,50 @@ status replay_a
 - 默认分析规则只检测示例温度向上越过 22 °C 的事件，不代表航空诊断阈值。
 - 插件的 `fail_start=1` 仅用于验证启动失败恢复。
 
+随机数据源插件 `bus_random` 与模拟插件使用相同的载荷约定（协议编号 `65535`，小端有符号 64 位毫值），配置项：
+
+```text
+random=0|1       0 为确定性递增（默认），1 为随机模式
+seed=N           随机模式下非零则固定随机种子，便于复现
+initial_milli=N  基准值（毫）
+step_milli=N     确定性模式下的步长（毫）
+spread_milli=N   随机模式下相对基准值的上下随机范围（毫）
+period_ms=N      发送周期
+channel=N        通道
+fail_start=0|1   仅用于验证启动失败恢复
+profile=none|command|feedback|sensor_a|sensor_b   场景模式：多实例协调产生相关数据
+scenario_seed=N  场景模式下所有实例共享的随机种子
+response_delay=N 场景模式下反馈相对指令延迟的节拍数
+phase_ms=N       首帧前延迟
+jitter_ms=N      周期抖动（±N）
+loss_prob=0..100 丢帧概率（%）
+valid_prob=0..100 有效概率（%），否则置无效标志
+arrival_delay_ms=N 每帧到达前延迟
+```
+
+> 以上 `phase_ms/jitter_ms/loss_prob/valid_prob/arrival_delay_ms` 仅用于生成“多周期、缺失、无效”等**样例场景**以贯通数据链路，**不得用于研究结论**；不配置时行为与之前完全一致。
+
+随机模式示例：`add rng build-gcc-debug/bin/bus_random.dll random=1;spread_milli=3000;period_ms=5`。
+
+**场景模式**用于演示有意义的相关分析。把四个实例配置成不同 `profile`，共用同一个 `scenario_seed` 和 `period_ms`；所有实例按宿主的同一单调时钟对齐到相同节拍，因此时间戳一致、不会出现“迟到”质量标记：
+
+```text
+add control  build-gcc-debug/bin/bus_random.dll profile=command;scenario_seed=1001;period_ms=20
+add feedback build-gcc-debug/bin/bus_random.dll profile=feedback;scenario_seed=1001;period_ms=20;response_delay=1
+add sensor_a build-gcc-debug/bin/bus_random.dll profile=sensor_a;scenario_seed=1001;period_ms=20
+add sensor_b build-gcc-debug/bin/bus_random.dll profile=sensor_b;scenario_seed=1001;period_ms=20
+```
+
+反馈跟随指令并偶尔不响应，两路温度多数时候一致、偶尔不一致，于是分析会得到“一致/不一致/响应正常/响应超时”等有意义的结论。数据每次运行不同（种子可换），但内部是协调的。未设置 `profile` 时保持原有递增或随机的独立行为。
+
 ## 当前边界与下一阶段
 
-当前是单进程、每个采集实例独立线程、一个处理线程。尚未实现采集/处理双进程隔离、共享内存 IPC、真实总线驱动、真实时钟同步、自动重排缓冲、插值、统计融合算法、数据库或网络 API。v0.2 提供了显式时钟映射、有限时间窗口配对及两类规则；这些不能替代硬件同步和真实系统校准。配置模式会将原始报文、参数和结果分别持久化，原有无配置演示仍只持久化原始报文。
+当前是单进程、每个采集实例独立线程、一个处理线程。尚未实现采集/处理双进程隔离、共享内存 IPC、真实总线驱动、真实时钟同步、插值、数据库或网络 API；已提供带最大迟到窗口的重排缓冲、按窗口的冗余去重和多源统计融合。v0.2 提供了显式时钟映射、有限时间窗口配对及两类规则；这些不能替代硬件同步和真实系统校准。配置模式会将原始报文、参数和结果分别持久化，原有无配置演示仍只持久化原始报文。
 
 队列满时拒绝的报文不会进入原始归档；统计会反映损失。存储失败使处理链路故障并拒绝后续输入；`accepted - completed` 可帮助识别未完成数据。宿主入队成功不等于记录已写入磁盘。关机时的流刷新不提供断电持久性承诺。归档当前为单文件，自动分段、落盘策略及持久化生命周期事件留待下一阶段。
 
 插件在同一进程运行，因此不隔离驱动崩溃；C ABI 解决接口与所有权边界，不承诺任意编译器、架构或系统之间二进制通用。支持软件插件切换不等于设备支持带电插拔。
 
-下一步可确定一种真实总线及其采集卡 SDK，并核对其设备 ICD、参数更新周期和时钟语义。后续平台接入可以围绕现有配置、参数流和分析对象添加 API。
+协议运行时已补齐识别、路由、解析和命令行入口，但内置的两种协议是软件侧组帧与校验，不是设备 ICD 或总线物理层实现；`bus_backend` 默认数据路径也仍按报文中已知协议编号分派。下一步可确定一种真实总线及其采集卡 SDK，按厂家 ICD 派生子协议实现，并核对其参数更新周期和时钟语义。后续平台接入可以围绕现有配置、参数流和分析对象添加 API。
 
 详细设计见 [架构说明](docs/architecture.md)、[插件开发约定](docs/plugin-contract.md) 和 [v0.2 验证记录](docs/verification-v0.2.md)。初版来源快照已保存到 `snapshots/`，原 [v0.1 验证记录](docs/verification.md) 作为历史保留。

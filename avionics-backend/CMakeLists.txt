@@ -27,7 +27,11 @@ add_library(bus_core STATIC
     src/decoder/dictionary_decoder.cpp
     src/analysis/processing.cpp
     src/storage/jsonl_analysis.cpp
-    src/analysis/rule_analyzer.cpp)
+    src/analysis/rule_analyzer.cpp
+    src/protocol/protocols.cpp
+    src/protocol/protocol_router.cpp
+    src/protocol/protocol_pipeline.cpp
+    src/export/flat_export.cpp)
 target_link_libraries(bus_core PUBLIC bus_archive project_options Threads::Threads ${CMAKE_DL_LIBS})
 
 function(add_bus_plugin name source)
@@ -39,12 +43,17 @@ function(add_bus_plugin name source)
 endfunction()
 add_bus_plugin(bus_simulated plugins/simulated/simulated_plugin.cpp)
 add_bus_plugin(bus_replay plugins/replay/replay_plugin.cpp)
+add_bus_plugin(bus_random plugins/random/random_plugin.cpp)
 target_link_libraries(bus_replay PRIVATE bus_archive)
 
 add_executable(bus_backend src/main.cpp)
 target_link_libraries(bus_backend PRIVATE bus_core)
 add_executable(bus_analyze src/analyze_main.cpp)
 target_link_libraries(bus_analyze PRIVATE bus_core)
+add_executable(bus_protocol src/protocol/protocol_main.cpp)
+target_link_libraries(bus_protocol PRIVATE bus_core)
+add_executable(bus_export src/export/export_main.cpp)
+target_link_libraries(bus_export PRIVATE bus_core)
 
 include(CTest)
 if(BUILD_TESTING)
@@ -65,4 +74,16 @@ if(BUILD_TESTING)
     add_executable(protocol_contract_tests tests/protocol_contract.cpp)
     target_link_libraries(protocol_contract_tests PRIVATE bus_core)
     add_test(NAME protocol_contract COMMAND protocol_contract_tests)
+    add_executable(protocol_runtime_tests tests/protocol_runtime.cpp)
+    target_link_libraries(protocol_runtime_tests PRIVATE bus_core)
+    add_test(NAME protocol_runtime COMMAND protocol_runtime_tests)
+    set_tests_properties(protocol_runtime PROPERTIES TIMEOUT 30)
+    add_test(NAME protocol_cli COMMAND bus_protocol --demo)
+    set_tests_properties(protocol_cli PROPERTIES TIMEOUT 30)
+    add_test(NAME random_plugin_demo COMMAND bus_backend --demo $<TARGET_FILE:bus_random>)
+    set_tests_properties(random_plugin_demo PROPERTIES TIMEOUT 30)
+    add_executable(flat_export_tests tests/flat_export.cpp)
+    target_link_libraries(flat_export_tests PRIVATE bus_core)
+    add_test(NAME flat_export COMMAND flat_export_tests "${CMAKE_BINARY_DIR}/export-output")
+    set_tests_properties(flat_export PROPERTIES TIMEOUT 30)
 endif()

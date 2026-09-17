@@ -1,4 +1,5 @@
 #include "core/processing.hpp"
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <stdexcept>
@@ -34,6 +35,38 @@ bool fresh(const AlignedSample& sample, std::uint64_t now) {
     return sample.uncertainty_ns <= sample.sample.max_age_ns && age <= sample.sample.max_age_ns - sample.uncertainty_ns;
 }
 std::uint64_t distance(std::uint64_t a, std::uint64_t b) { return a > b ? a - b : b - a; }
+std::optional<double> fuseValues(FusionMethod method, std::vector<double> values) {
+    if (values.empty()) return std::nullopt;
+    if (method == FusionMethod::Mean) {
+        double sum = 0;
+        for (const auto value : values) sum += value;
+        return sum / static_cast<double>(values.size());
+    }
+    if (method == FusionMethod::Median) {
+        std::sort(values.begin(), values.end());
+        const auto size = values.size();
+        return size % 2 ? values[size / 2] : (values[size / 2 - 1] + values[size / 2]) / 2;
+    }
+    std::vector<long long> rounded;
+    rounded.reserve(values.size());
+    for (const auto value : values) {
+        if (!std::isfinite(value) || value > 9.0e15 || value < -9.0e15) return std::nullopt;
+        rounded.push_back(std::llround(value));
+    }
+    std::sort(rounded.begin(), rounded.end());
+    std::size_t best_count = 0, winners = 0;
+    long long best = rounded.front();
+    for (std::size_t i = 0; i < rounded.size();) {
+        std::size_t j = i;
+        while (j < rounded.size() && rounded[j] == rounded[i]) ++j;
+        const auto count = j - i;
+        if (count > best_count) { best_count = count; best = rounded[i]; winners = 1; }
+        else if (count == best_count) ++winners;
+        i = j;
+    }
+    if (winners > 1) return std::nullopt;
+    return static_cast<double>(best);
+}
 CorrelationResult event(const std::string& id, const std::string& outcome, const AlignedSample& first,
     const AlignedSample* second = nullptr) {
     CorrelationResult result;
@@ -43,7 +76,7 @@ CorrelationResult event(const std::string& id, const std::string& outcome, const
     return result;
 }
 }
-AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
+AlignedSample TimeQualityProcessor::align(const ParameterSample& sample) const {
     AlignedSample out; out.sample = sample;
     if (!sample.valid) out.quality.push_back("invalid_payload");
     const ClockDefinition* clock = nullptr;
@@ -59,8 +92,12 @@ AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
         if (sample.capture_time_ns < offset) { out.quality.push_back("time_underflow"); return out; }
         out.time_ns = sample.capture_time_ns - offset;
     }
+    return out;
+}
+AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
+    auto out = align(sample);
     // An invalid payload must not poison the ordering baseline with an arbitrary timestamp.
-    if (!sample.valid) return out;
+    if (!out.time_ns || !sample.valid) return out;
     const auto key = std::make_pair(sample.source, sample.parameter_id);
     auto found = previous_.find(key);
     if (found != previous_.end() && found->second.sample.generation == sample.generation &&
@@ -78,8 +115,12 @@ AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
 }
 ProcessingService::ProcessingService(BackendConfiguration config, std::shared_ptr<IAnalysisSink> sink)
     : config_(std::move(config)), quality_(config_.clocks), sink_(std::move(sink)),
-      pairs_(config_.consistency.size()), responses_(config_.responses.size()) {
+      pairs_(config_.consistency.size()), responses_(config_.responses.size()),
+      fusions_(config_.fusion.size()), dedup_last_(config_.dedup.size()) {
     if (!sink_) throw std::invalid_argument("analysis sink is required");
+    for (const auto& definition : config_.reorder) reorder_windows_[definition.group] = definition.window_ns;
+    for (std::size_t i = 0; i < fusions_.size(); ++i)
+        fusions_[i].history.resize(config_.fusion[i].channels.size());
 }
 void ProcessingService::emit(CorrelationResult result) {
     sink_->result(result);
@@ -90,7 +131,37 @@ void ProcessingService::emit(CorrelationResult result) {
 void ProcessingService::consume(const ParameterSample& sample) {
     std::lock_guard lock(mutex_);
     if (finished_) throw std::logic_error("analysis is already finished");
-    auto aligned = quality_.process(sample);
+    const auto probe = quality_.align(sample);
+    const auto window_it = probe.time_group.empty() ? reorder_windows_.end() : reorder_windows_.find(probe.time_group);
+    if (probe.time_ns && window_it != reorder_windows_.end() && window_it->second > 0) {
+        const auto group = probe.time_group;
+        const auto time = *probe.time_ns;
+        reorder_buffers_[group].emplace(time, sample);
+        auto& maximum = reorder_max_[group];
+        if (time > maximum) maximum = time;
+        releaseReady(group, false);
+        return;
+    }
+    deliver(quality_.process(sample));
+}
+void ProcessingService::applyDedup(AlignedSample& aligned) {
+    if (config_.dedup.empty() || !aligned.time_ns) return;
+    const auto& sample = aligned.sample;
+    for (std::size_t i = 0; i < config_.dedup.size(); ++i) {
+        const auto& rule = config_.dedup[i];
+        const bool matches = (rule.source == "*" || rule.source == sample.source) &&
+            (rule.parameter == "*" || rule.parameter == sample.parameter_id);
+        if (!matches) continue;
+        auto& last = dedup_last_[i];
+        if (last && *aligned.time_ns >= *last && *aligned.time_ns - *last <= rule.window_ns) {
+            aligned.quality.push_back("duplicate");
+            continue;
+        }
+        last = *aligned.time_ns;
+    }
+}
+void ProcessingService::deliver(AlignedSample aligned) {
+    applyDedup(aligned);
     if (aligned.usable()) {
         auto& watermark = watermarks_[aligned.time_group];
         if (*aligned.time_ns < watermark) aligned.quality.push_back("late_for_group");
@@ -103,7 +174,23 @@ void ProcessingService::consume(const ParameterSample& sample) {
     sink_->sample(aligned);
     ++stats_.samples;
     if (aligned.usable()) ++stats_.usable; else ++stats_.rejected;
-    processConsistency(aligned); processResponse(aligned);
+    processConsistency(aligned); processResponse(aligned); processFusion(aligned);
+}
+void ProcessingService::releaseReady(const std::string& group, bool force) {
+    const auto window_it = reorder_windows_.find(group);
+    const auto buffer_it = reorder_buffers_.find(group);
+    if (window_it == reorder_windows_.end() || buffer_it == reorder_buffers_.end()) return;
+    auto& buffer = buffer_it->second;
+    const auto maximum = reorder_max_[group];
+    const auto window = window_it->second;
+    const auto cutoff = (force || maximum < window) ? std::numeric_limits<std::uint64_t>::max() : maximum - window;
+    while (!buffer.empty()) {
+        auto it = buffer.begin();
+        if (!force && it->first > cutoff) break;
+        const auto raw = it->second;
+        buffer.erase(it);
+        deliver(quality_.process(raw));
+    }
 }
 void ProcessingService::processConsistency(const AlignedSample& sample) {
     for (std::size_t i = 0; i < config_.consistency.size(); ++i) {
@@ -175,6 +262,49 @@ void ProcessingService::processResponse(const AlignedSample& sample) {
         old = sample;
     }
 }
+void ProcessingService::processFusion(const AlignedSample& sample) {
+    const auto reference = sample.time_ns;
+    if (!reference) return;
+    for (std::size_t i = 0; i < config_.fusion.size(); ++i) {
+        const auto& rule = config_.fusion[i];
+        auto& state = fusions_[i];
+        std::size_t matched = rule.channels.size();
+        for (std::size_t c = 0; c < rule.channels.size(); ++c)
+            if (rule.channels[c].source == sample.sample.source && rule.channels[c].parameter == sample.sample.parameter_id) { matched = c; break; }
+        if (matched == rule.channels.size()) continue;
+        if (!sample.usable()) { state.history[matched].clear(); continue; }
+        auto& history = state.history[matched];
+        history.push_back(sample);
+        if (history.size() > 2) history.pop_front();
+        std::vector<double> values(rule.channels.size(), 0.0);
+        std::vector<const AlignedSample*> used(rule.channels.size(), nullptr);
+        bool complete = true;
+        for (std::size_t c = 0; c < rule.channels.size() && complete; ++c) {
+            const auto& channel = state.history[c];
+            if (channel.empty()) { complete = false; break; }
+            const auto& newest = channel.back();
+            if (newest.time_group != sample.time_group || !newest.usable() || !newest.time_ns ||
+                *newest.time_ns > *reference || *reference - *newest.time_ns > rule.window_ns) { complete = false; break; }
+            const auto value = numeric(newest.sample.value);
+            if (!value) { complete = false; break; }
+            values[c] = *value;
+            used[c] = &newest;
+        }
+        if (!complete) continue;
+        const auto fused = fuseValues(rule.method, values);
+        if (!fused) continue;
+        double minimum = values.front(), maximum = values.front();
+        for (const auto value : values) { minimum = std::min(minimum, value); maximum = std::max(maximum, value); }
+        CorrelationResult result;
+        result.rule = rule.id;
+        result.outcome = maximum - minimum <= rule.tolerance ? "fused" : "fused_divergence";
+        result.time_group = sample.time_group;
+        result.time_ns = *reference;
+        result.metric = *fused;
+        for (const auto* entry : used) result.evidence.push_back(evidence(*entry));
+        emit(std::move(result));
+    }
+}
 void ProcessingService::expire(const std::string& group, std::uint64_t time, bool inclusive) {
     for (std::size_t i = 0; i < responses_.size(); ++i) {
         auto& state = responses_[i]; const auto& rule = config_.responses[i];
@@ -197,11 +327,17 @@ void ProcessingService::advance(const std::string& group, std::uint64_t watermar
     bool known = false;
     for (const auto& clock : config_.clocks) if (clock.group == group) known = true;
     if (!known || watermark < watermarks_[group]) throw std::invalid_argument("unknown group or backward watermark");
+    if (reorder_windows_.count(group)) {
+        auto& maximum = reorder_max_[group];
+        if (watermark > maximum) maximum = watermark;
+        releaseReady(group, false);
+    }
     expire(group, watermark, true); watermarks_[group] = watermark;
 }
 void ProcessingService::finish() {
     std::lock_guard lock(mutex_);
     if (finished_) return;
+    for (const auto& entry : reorder_buffers_) releaseReady(entry.first, true);
     for (std::size_t i = 0; i < responses_.size(); ++i) if (responses_[i].pending) {
         emit(event(config_.responses[i].id, "response_unresolved", *responses_[i].pending)); responses_[i].pending.reset();
     }
