@@ -14,6 +14,7 @@ import time
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", default="build-gcc-debug")
+    parser.add_argument("--config", default="config/correlation-demo.ini")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
     os.chdir(root)
@@ -27,7 +28,7 @@ def main():
     binaries = Path(args.build) / "bin"
     plugin = (binaries / f"bus_simulated{plugin_suffix}").as_posix()
     archive = run / "capture.avbus"
-    command = [str(binaries / f"bus_backend{suffix}"), "--interactive", str(archive), "config/correlation-demo.ini"]
+    command = [str(binaries / f"bus_backend{suffix}"), "--interactive", str(archive), args.config]
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                env=env, text=True, encoding="utf-8", errors="replace", creationflags=flags)
@@ -51,7 +52,7 @@ def main():
     if process.returncode or "command failed:" in output:
         raise RuntimeError(f"Live command failed: {output}")
     offline = run / "offline"
-    result = subprocess.run([str(binaries / f"bus_analyze{suffix}"), "--analyze", "config/correlation-demo.ini",
+    result = subprocess.run([str(binaries / f"bus_analyze{suffix}"), "--analyze", args.config,
                              str(archive), str(offline)], env=env, capture_output=True, text=True, timeout=10,
                             creationflags=flags)
     (run / "offline.log").write_text(result.stdout + result.stderr, encoding="utf-8")

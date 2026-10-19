@@ -42,6 +42,8 @@ struct ResponseDefinition {
 struct BackendConfiguration {
     std::string version;
     std::size_t max_parameter_states{4096};
+    std::size_t max_reorder_samples{8192};
+    std::uint64_t allowed_lateness_ns{};
     std::vector<FieldDefinition> fields;
     std::vector<ClockDefinition> clocks;
     std::vector<ConsistencyDefinition> consistency;

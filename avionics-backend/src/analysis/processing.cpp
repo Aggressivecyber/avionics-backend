@@ -65,7 +65,7 @@ AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
         if (sample.capture_time_ns < offset) { out.quality.push_back("time_underflow"); return out; }
         out.time_ns = sample.capture_time_ns - offset;
     }
-    // An invalid payload must not poison the ordering baseline with an arbitrary timestamp.
+    // Mapping errors and invalid payloads do not advance ordering state.
     if (!sample.valid) return out;
     const auto key = std::make_pair(sample.source, sample.parameter_id);
     auto found = previous_.find(key);
@@ -106,7 +106,49 @@ void ProcessingService::emit(CorrelationResult result) {
 void ProcessingService::consume(const ParameterSample& sample) {
     std::lock_guard lock(mutex_);
     if (finished_) throw std::logic_error("analysis is already finished");
+    if (!config_.allowed_lateness_ns) { processAligned(quality_.process(sample)); return; }
     auto aligned = quality_.process(sample);
+    if (!aligned.time_ns) {
+        // An unplaceable clock boundary invalidates this source's buffered
+        // observations, so they cannot later restore a pre-boundary baseline.
+        for (auto& [group_name, group] : reorder_) {
+            (void)group_name;
+            for (auto item = group.samples.begin(); item != group.samples.end();) {
+                if (item->second.sample.source != sample.source) { ++item; continue; }
+                auto cancelled = std::move(item->second);
+                cancelled.quality.push_back("unmapped_clock_boundary");
+                item = group.samples.erase(item); --buffered_;
+                processAligned(std::move(cancelled));
+            }
+        }
+        processAligned(std::move(aligned)); return;
+    }
+    auto& group = reorder_[aligned.time_group];
+    const auto time = *aligned.time_ns;
+    if (time < group.closed_before || (group.closed_through && time <= *group.closed_through)) {
+        aligned.quality.push_back("late_for_group"); processAligned(std::move(aligned)); return;
+    }
+    if (aligned.usable()) {
+        group.max_seen = std::max(group.max_seen, time);
+        const auto limit = group.max_seen > config_.allowed_lateness_ns ? group.max_seen - config_.allowed_lateness_ns : 0;
+        // Equality remains open, allowing same-time observations to be ordered
+        // by stable stream identity rather than callback scheduling.
+        drain(group, limit, false); group.closed_before = std::max(group.closed_before, limit);
+    }
+    if (buffered_ >= config_.max_reorder_samples) throw std::runtime_error("reorder sample capacity exceeded");
+    group.samples.emplace(PendingKey{time, sample.source, sample.parameter_id, sample.generation,
+        sample.origin_generation, sample.sequence, sample.raw_record_index}, std::move(aligned));
+    ++buffered_;
+}
+void ProcessingService::drain(ReorderGroup& group, std::uint64_t limit, bool inclusive) {
+    while (!group.samples.empty()) {
+        auto item = group.samples.begin(); const auto time = std::get<0>(item->first);
+        if (time > limit || (!inclusive && time == limit)) break;
+        auto sample = std::move(item->second); group.samples.erase(item); --buffered_;
+        processAligned(std::move(sample));
+    }
+}
+void ProcessingService::processAligned(AlignedSample aligned) {
     if (aligned.usable()) {
         auto& watermark = watermarks_[aligned.time_group];
         if (*aligned.time_ns < watermark) aligned.quality.push_back("late_for_group");
@@ -215,17 +257,26 @@ void ProcessingService::advance(const std::string& group, std::uint64_t watermar
     bool known = false;
     for (const auto& clock : config_.clocks) if (clock.group == group) known = true;
     if (!known || watermark < watermarks_[group]) throw std::invalid_argument("unknown group or backward watermark");
+    if (config_.allowed_lateness_ns) {
+        auto& pending = reorder_[group];
+        if (watermark < pending.closed_before || (pending.closed_through && watermark < *pending.closed_through))
+            throw std::invalid_argument("backward reorder watermark");
+        drain(pending, watermark, true); pending.closed_through = watermark;
+    }
     expire(group, watermark, true); watermarks_[group] = watermark;
 }
 void ProcessingService::finish() {
     std::lock_guard lock(mutex_);
     if (finished_) return;
+    for (auto& [group_name, group] : reorder_) { (void)group_name; drain(group, UINT64_MAX, true); }
     for (std::size_t i = 0; i < responses_.size(); ++i) if (responses_[i].pending) {
         emit(event(config_.responses[i].id, "response_unresolved", *responses_[i].pending)); responses_[i].pending.reset();
     }
     sink_->flush(); finished_ = true;
 }
-ProcessingStats ProcessingService::stats() const { std::lock_guard lock(mutex_); return stats_; }
+ProcessingStats ProcessingService::stats() const {
+    std::lock_guard lock(mutex_); auto result = stats_; result.buffered = buffered_; return result;
+}
 std::vector<CorrelationResult> ProcessingService::results() const {
     std::lock_guard lock(mutex_); return {history_.begin(), history_.end()};
 }

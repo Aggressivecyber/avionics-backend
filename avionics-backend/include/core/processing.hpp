@@ -27,6 +27,7 @@ struct CorrelationResult {
 };
 struct ProcessingStats {
     std::uint64_t samples{}, usable{}, rejected{}, results{};
+    std::size_t buffered{};
     std::map<std::string, std::uint64_t> outcomes;
 };
 class TimeQualityProcessor {
@@ -72,6 +73,15 @@ private:
     };
     void processConsistency(const AlignedSample&);
     void processResponse(const AlignedSample&);
+    void processAligned(AlignedSample);
+    using PendingKey = std::tuple<std::uint64_t, std::string, std::string, std::uint64_t,
+        std::uint64_t, std::uint64_t, std::uint64_t>;
+    struct ReorderGroup {
+        std::uint64_t max_seen{}, closed_before{};
+        std::optional<std::uint64_t> closed_through;
+        std::multimap<PendingKey, AlignedSample> samples;
+    };
+    void drain(ReorderGroup&, std::uint64_t limit, bool inclusive);
     void expire(const std::string& group, std::uint64_t time_ns, bool inclusive);
     void emit(CorrelationResult);
     BackendConfiguration config_;
@@ -81,6 +91,8 @@ private:
     std::vector<ResponseState> responses_;
     std::map<std::pair<std::string, std::string>, std::vector<std::size_t>> consistency_by_input_, responses_by_input_;
     std::map<std::string, std::uint64_t> watermarks_;
+    std::map<std::string, ReorderGroup> reorder_;
+    std::size_t buffered_{};
     std::deque<CorrelationResult> history_;
     ProcessingStats stats_;
     mutable std::mutex mutex_;

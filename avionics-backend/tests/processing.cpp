@@ -1,5 +1,7 @@
 #include "core/processing.hpp"
 #include "core/demo_fixture.hpp"
+#include <algorithm>
+#include <array>
 #include <cmath>
 #include <iostream>
 #include <limits>
@@ -53,15 +55,23 @@ void testConfiguration(const std::filesystem::path& path, const std::filesystem:
     replace("type=signed", "type=mystery");
     replace("command_parameter=command", "command_parameter=missing");
     replace("schema=1", "schema=2");
+    replace("schema=1", "schema=99");
     replace("window_ms=5", "window_ms=5\nwindow_ms=5");
     reject(original + "\n[unknown section]\nx=1\n");
     reject(original + "\n[processing]\nmax_parameter_states=3\n");
     reject(original + "\n[processing]\nmax_parameter_states=0\n");
+    reject(original + "\n[processing]\nmax_reorder_samples=0\n");
     const auto valid = BackendConfiguration::load(path);
     check(valid.fields.size() == 4 && valid.responses.size() == 1 && valid.consistency.size() == 1, "configuration lost rules");
     const auto budgeted = output / "budgeted.ini";
     { std::ofstream out(budgeted); out << original << "\n[processing]\nmax_parameter_states=8192\n"; }
     check(BackendConfiguration::load(budgeted).max_parameter_states == 8192, "explicit state capacity was not loaded");
+    auto profile = original;
+    profile.replace(profile.find("schema=1"), 8, "schema=2");
+    { std::ofstream out(budgeted); out << profile << "\n[processing]\nallowed_lateness_ms=50\nmax_reorder_samples=32\n"; }
+    const auto configured = BackendConfiguration::load(budgeted);
+    check(configured.allowed_lateness_ns == 50000000 && configured.max_reorder_samples == 32,
+        "schema 2 did not preserve its explicit event-time contract");
     std::ostringstream large_text;
     large_text << "[dictionary]\nschema=1\nversion=capacity-test\n[clock cap]\ndomain=1\ngroup=host\n";
     for (int i = 0; i < 4097; ++i)
@@ -193,6 +203,78 @@ void testResponses(BackendConfiguration cfg) {
         check(sink->results[0].latency_low_ns == 29000000 && sink->results[0].latency_high_ns == 33000000, "latency bounds incorrect");
     }
 }
+void testReordering(BackendConfiguration cfg) {
+    cfg.allowed_lateness_ns = 100000000;
+    std::vector<ParameterSample> observations = {sample("feedback", 0, 0, 0), sample("control", 0, 0, 0),
+        sample("control", 10, 1, 1), sample("feedback", 20, 0, 1), sample("feedback", 22, 1, 2), sample("sensor_a", 60, 10, 0)};
+    observations.back().parameter_id = "temperature_a"; observations.back().unit = "degC";
+    for (std::size_t i = 0; i < observations.size(); ++i) observations[i].raw_record_index = i + 1;
+    std::array<int, 6> order{0, 1, 2, 3, 4, 5};
+    std::size_t permutations{};
+    do {
+        const auto f0 = std::find(order.begin(), order.end(), 0), f1 = std::find(order.begin(), order.end(), 3);
+        const auto f2 = std::find(order.begin(), order.end(), 4), c0 = std::find(order.begin(), order.end(), 1);
+        const auto c1 = std::find(order.begin(), order.end(), 2);
+        if (!(f0 < f1 && f1 < f2 && c0 < c1)) continue;
+        auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink);
+        for (int i : order) service.consume(observations[static_cast<std::size_t>(i)]);
+        service.finish();
+        check(count(service, "response_observed") == 1 && count(service, "response_timeout") == 0,
+            "bounded source interleaving changed response outcome");
+        check(sink->results[0].metric == 12 && sink->results[0].evidence[0].record_index == 3 &&
+            sink->results[0].evidence[1].record_index == 5, "reordering changed latency or evidence");
+        check(service.stats().rejected == 0 && service.stats().buffered == 0, "valid reordered samples were rejected or retained");
+        ++permutations;
+    } while (std::next_permutation(order.begin(), order.end()));
+    check(permutations == 60, "source interleavings were not fully covered");
+    cfg.allowed_lateness_ns = 50000000;
+    {
+        auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink);
+        for (int i : {0, 1, 2, 3, 5, 4}) service.consume(observations[static_cast<std::size_t>(i)]);
+        service.finish();
+        check(count(service, "response_observed") == 1 && sink->results[0].metric == 12,
+            "audit's 60ms-before-22ms counterexample still produced a timeout");
+    }
+    {
+        auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink); baseline(service);
+        service.consume(sample("control", 10, 1, 1)); service.consume(sample("feedback", 40, 1, 1));
+        service.advance("host", 1040000000);
+        check(count(service, "response_observed") == 1 && count(service, "response_timeout") == 0,
+            "explicit watermark expired before draining its deadline response");
+        service.consume(sample("feedback", 40, 0, 2));
+        check(service.stats().rejected == 1, "closed watermark accepted an already closed event time");
+        service.finish();
+    }
+    {
+        auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink); baseline(service);
+        service.consume(sample("control", 10, 1, 1));
+        auto invalid = sample("sensor_a", 1000, 10, 0); invalid.parameter_id = "temperature_a"; invalid.valid = false;
+        service.consume(invalid); service.consume(sample("feedback", 22, 1, 1)); service.finish();
+        check(count(service, "response_observed") == 1 && count(service, "response_timeout") == 0,
+            "invalid future timestamp advanced reorder progress");
+    }
+    {
+        auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink);
+        for (int i : {0, 1, 2, 3, 5}) service.consume(observations[static_cast<std::size_t>(i)]);
+        auto duplicate = observations.back(); duplicate.capture_time_ns = 2000000000;
+        service.consume(duplicate); service.consume(observations[4]); service.finish();
+        check(count(service, "response_observed") == 1 && count(service, "response_timeout") == 0,
+            "duplicate sequence advanced reorder progress with an arbitrary timestamp");
+    }
+    {
+        auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink); baseline(service);
+        service.consume(sample("control", 10, 1, 1)); service.consume(sample("feedback", 22, 1, 1));
+        auto unknown = sample("feedback", 23, 0, 2); unknown.clock_domain = 999; service.consume(unknown); service.finish();
+        check(count(service, "response_observed") == 0 && service.stats().rejected >= 1,
+            "unmapped clock boundary allowed buffered source observations to restore an association");
+    }
+    {
+        cfg.max_reorder_samples = 1;
+        auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink);
+        service.consume(sample("control", 0, 0, 0));
+        throws([&] { service.consume(sample("feedback", 0, 0, 0)); }, "reorder state grew beyond its budget");
+    }
+}
 void testConsistencyAndFixture(const BackendConfiguration& cfg, const std::filesystem::path& output) {
     auto sink = std::make_shared<JsonlAnalysisSink>(output / "fixture_analysis");
     ProcessingService service(cfg, sink); DictionaryDecoder decoder(cfg);
@@ -230,6 +312,7 @@ int main(int argc, char** argv) {
         const auto config = BackendConfiguration::load(argv[1]);
         testConfiguration(argv[1], output); testDictionary(); std::cout << "PASS strict dictionary, bit fields, types, precision and invalid data\n";
         testTime(config); testResponses(config); std::cout << "PASS clock mappings, sequence/time quality, response boundaries, restart, stale data, EOF and uncertainty\n";
+        testReordering(config); std::cout << "PASS bounded event-time reordering, 60 source interleavings, deadline watermark, invalid clocks and capacity\n";
         testConsistencyAndFixture(config, output); std::cout << "PASS consistency, unit/group boundaries, known 12ms fixture and JSONL output\n";
         std::cout << "ALL PROCESSING TESTS PASSED\nartifacts=" << output.string() << '\n'; return 0;
     } catch (const std::exception& e) { std::cerr << "PROCESSING TEST FAILURE: " << e.what() << '\n'; return 1; }
