@@ -36,6 +36,13 @@ QFrame#rail QPushButton {{ background: transparent; color: {MUTED}; border: 1px 
 QFrame#rail QPushButton:hover {{ background: {RAISED}; color: {INK}; }}
 QFrame#rail QPushButton:checked {{ background: {ACTIVE}; color: {INK}; font-weight: 600; }}
 QFrame#rail QPushButton:focus {{ border-color: {INK}; }}
+QFrame#captureControls QPushButton {{ background: {SURFACE}; color: {INK}; border: 1px solid {CONTROL};
+                                    text-align: center; padding: 6px 8px; }}
+QFrame#captureControls QPushButton:hover {{ background: {RAISED}; border-color: {MUTED}; }}
+QFrame#captureControls QPushButton:disabled {{ background: {RAISED}; color: {MUTED}; border-color: {BORDER}; }}
+QFrame#captureControls QPushButton#primary {{ background: {INK}; color: {SURFACE}; border-color: {INK}; }}
+QFrame#captureControls QPushButton#primary:hover {{ background: #353736; }}
+QFrame#captureControls QPushButton#primary:disabled {{ background: {ACTIVE}; color: {MUTED}; border-color: {ACTIVE}; }}
 QLabel#heading {{ font-size: 22px; font-weight: 600; }}
 QLabel#section {{ font-size: 16px; font-weight: 600; }}
 QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
@@ -82,6 +89,13 @@ QTabBar::tab {{ padding: 8px 14px; color: {MUTED}; border-bottom: 2px solid {BOR
 QTabBar::tab:selected {{ color: {INK}; border-bottom-color: {INK}; }}
 QPlainTextEdit {{ background: {RAISED}; border: 1px solid {BORDER}; border-radius: 6px; padding: 8px;
                  selection-background-color: {ACTIVE}; selection-color: {INK}; }}
+QListWidget {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 6px;
+               selection-background-color: {ACTIVE}; selection-color: {INK}; outline: none; }}
+QListWidget::item {{ min-height: 20px; padding: 6px 8px; }}
+QListWidget::item:selected {{ background: {ACTIVE}; color: {INK}; }}
+QListWidget::item:hover {{ background: {RAISED}; }}
+QScrollArea#configurationScroll {{ background: {RAISED}; border: 1px solid {BORDER}; border-radius: 6px; }}
+QWidget#configurationFields {{ background: {RAISED}; }}
 QScrollBar {{ background: transparent; border: none; }}
 QScrollBar:vertical {{ width: 12px; margin: 0; }}
 QScrollBar:horizontal {{ height: 12px; margin: 0; }}

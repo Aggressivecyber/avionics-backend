@@ -1,4 +1,5 @@
 from collections import deque
+from configparser import Error as ConfigurationError
 from datetime import datetime
 import json
 import os
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from .backend import BackendClient, read_jsonl_tail, writable_data_path
+from .configuration_editor import ConfigurationEditor
 from . import __version__
 from .models import EventModel, ParameterModel, TrendPlot
 from .plugin_center import PluginCenter, ReplaySetupDialog
@@ -122,6 +124,7 @@ class MainWindow(QMainWindow):
     def __init__(self, bin_dir: Path, data_dir: Path, configuration: Path):
         super().__init__()
         self.bin_dir = bin_dir
+        self.configuration_path = configuration.resolve()
         self.demo_configuration = Path(__file__).resolve().parents[2] / "config" / "desktop-demo.ini"
         self.plugin_definitions = json.loads(Path(__file__).with_name("plugins.json").read_text(encoding="utf-8"))
         suffix = ".dll" if os.name == "nt" else ".so"
@@ -145,10 +148,13 @@ class MainWindow(QMainWindow):
         self.disabled_plugins = set()
         self.plugin_action_pending = False
         self.archive = None
+        self.archive_root = None
         self.demo_pending = False
         self.session_is_demo = False
         self.close_pending = False
         self.busy = False
+        self.configuration_customized = False
+        self.configuration_candidate = None
         self.last_snapshot_time = None
         self.last_counts = None
         self.display_omitted = 0
@@ -164,6 +170,10 @@ class MainWindow(QMainWindow):
         self.offline_stdout = bytearray()
         self.offline_stderr = bytearray()
         self.offline_summary = None
+        self.configuration_process = QProcess(self)
+        self.configuration_process.setProcessEnvironment(self.client.process.processEnvironment())
+        self.configuration_process.finished.connect(self.configuration_validated)
+        self.configuration_process.errorOccurred.connect(self.configuration_validation_error)
         self.setWindowTitle(f"AEROBUS v{__version__} · 地面总线试验与分析工作台")
         self.setWindowIcon(icon("monitor"))
         self.resize(1440, 920)
@@ -214,7 +224,7 @@ class MainWindow(QMainWindow):
         self.plugins_nav = button("插件中心", lambda: self.navigate(2), icon_name="plugins")
         self.relations_nav = button("数据关联", lambda: self.navigate(3), icon_name="relations")
         self.project_nav = button("项目设置", lambda: self.navigate(4), icon_name="settings")
-        self.project_nav.setToolTip("设置项目名称、解析规则与保存目录，创建项目、开始采集或结束并封存。")
+        self.project_nav.setToolTip("设置项目名称和根目录，在表单中编辑解析字典、分析规则和时间处理配置。")
         for nav in (self.plugins_nav, self.monitor_nav, self.relations_nav, self.offline_nav, self.project_nav):
             nav.setCheckable(True)
             nav.setIconSize(QSize(20, 20))
@@ -222,6 +232,22 @@ class MainWindow(QMainWindow):
         navigation.addStretch()
         navigation.addWidget(label("原始归档 · 参数分析", "muted"))
         navigation.addWidget(label(f"v{__version__}", "muted"))
+        self.capture_controls = QFrame()
+        self.capture_controls.setObjectName("captureControls")
+        controls = QVBoxLayout(self.capture_controls)
+        controls.setContentsMargins(0, 12, 0, 0)
+        controls.setSpacing(8)
+        self.badge = label("等待中", "badge")
+        self.badge.setToolTip("当前项目的实际状态；详细回执可在日志和离线分析中查看。")
+        controls.addWidget(self.badge)
+        self.new_button = button("新建项目", self.new_session, icon_name="new_session")
+        self.new_button.setToolTip("使用项目设置中的名称和已保存配置创建新项目；已有归档保留。运行中的项目需先结束并封存。")
+        self.capture_button = button("开始采集", self.start_capture, True, icon_name="capture_start")
+        self.end_button = button("结束并封存", self.end_session, icon_name="capture_stop")
+        self.end_button.setToolTip("停止本项目全部采集源，写完剩余数据并完成归档；等待显示“已封存”。")
+        for action in (self.new_button, self.capture_button, self.end_button):
+            controls.addWidget(action)
+        navigation.addWidget(self.capture_controls)
         layout.addWidget(rail)
         body = QWidget()
         body.setObjectName("frame")
@@ -250,7 +276,7 @@ class MainWindow(QMainWindow):
         self.project_page = self.build_project_settings(configuration)
         self.pages.addWidget(self.project_page)
         sheet_layout.addWidget(self.pages, 1)
-        self.message = label("就绪 · 先启用插件，再到“项目设置”点击“开始采集”。", "muted")
+        self.message = label("就绪 · 先启用插件，再点击左下角“开始采集”。", "muted")
         self.message.setWordWrap(True)
         sheet_layout.addWidget(self.message)
         body_layout.addWidget(sheet, 1)
@@ -259,25 +285,28 @@ class MainWindow(QMainWindow):
         self.status_bar = QStatusBar()
         self.status_bar.setSizeGripEnabled(False)
         self.status_bar.setContentsMargins(20, 0, 16, 0)
-        self.recording_status = label("未开始采集", "muted")
+        self.recording_status = label("等待中", "muted")
         self.archive_path = QLineEdit()
         self.archive_path.setObjectName("archivePath")
         self.archive_path.setReadOnly(True)
-        self.archive_path.setPlaceholderText("新建项目后生成 .avbus 文件")
+        self.archive_path.setPlaceholderText("新建项目后显示相对根目录的归档路径")
         self.status_bar.addPermanentWidget(self.recording_status)
         self.status_bar.addPermanentWidget(label("· 自动保存为：", "muted"))
         self.status_bar.addPermanentWidget(self.archive_path, 1)
         self.setStatusBar(self.status_bar)
+        self.update_relative_paths()
         self.navigate(2)
 
     def build_project_settings(self, configuration):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(20)
-        intro = label("在这里设置本次项目、控制采集并完成归档。将鼠标停在设置或按钮上可查看说明。", "muted")
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
+        layout.setSpacing(16)
+        self.project_tabs = QTabWidget()
+        basics = QWidget()
+        basic_layout = QVBoxLayout(basics)
+        basic_layout.setContentsMargins(0, 16, 0, 0)
+        basic_layout.setSpacing(16)
         settings, fields = card()
         fields.addWidget(label("项目与数据", "section"))
         name_label = label("项目名称")
@@ -287,59 +316,68 @@ class MainWindow(QMainWindow):
         self.project_name.setToolTip("例如：1553B联调。新建项目时生成“名称_日期_时间_编号.avbus”；项目运行期间锁定名称。")
         self.project_name.setMinimumHeight(38)
         fields.addWidget(self.project_name)
-        config_label = label("解析字典 / 分析规则")
-        config_label.setToolTip("字典规定报文如何转换成参数，规则规定参数如何形成分析事件；配置需要与所选插件的数据格式匹配。")
-        fields.addWidget(config_label)
+        fields.addWidget(label("配置模板"))
+        self.preset_selector = QComboBox()
+        self.preset_selector.addItem("当前配置", str(configuration))
+        self.preset_selector.addItem("合成演示", str(self.demo_configuration))
+        self.preset_selector.addItem("1553B软件验证", str(Path(__file__).resolve().parents[2] / "config" / "mil1553b-demo.ini"))
+        self.preset_selector.setToolTip("选择要编辑的配置模板。切换到“字典与规则”可直接修改参数和规则，保存后用于新项目。")
+        self.preset_selector.activated.connect(lambda index: self.load_configuration(self.preset_selector.itemData(index)))
+        fields.addWidget(self.preset_selector)
         config_row = QHBoxLayout()
-        self.config_path = QLineEdit(str(configuration))
+        self.config_path = QLineEdit(configuration.name)
         self.config_path.setReadOnly(True)
-        self.config_path.setMinimumHeight(38)
-        self.config_path.setToolTip("本项目使用的解析字典与分析规则配置；可选中复制路径。\n" + str(configuration))
-        self.config_button = button("选择配置", self.browse_configuration, icon_name="browse")
-        self.config_button.setToolTip("选择与采集数据匹配的 .ini 字典与规则配置；项目运行期间锁定。预设插件会在创建项目时选择配套配置。")
+        self.config_path.setToolTip("当前配置；根目录内显示相对路径，悬停查看完整路径。\n" + str(configuration))
+        self.config_button = button("导入配置", self.browse_configuration, icon_name="browse")
+        self.config_button.setToolTip("导入已有配置后在“字典与规则”页直接编辑，无需在外部修改文件。")
         config_row.addWidget(self.config_path, 1)
         config_row.addWidget(self.config_button)
         fields.addLayout(config_row)
-        storage_label = label("数据保存目录")
-        storage_label.setToolTip("原始 .avbus 归档、分析结果及回执保存在这里；请选择 D 或 E 盘。")
+        storage_label = label("项目根目录")
+        storage_label.setToolTip("本项目配置和归档的根目录，可输入或选择 D/E 盘目录；运行期间锁定。下方路径均以此目录为基准。")
         fields.addWidget(storage_label)
         storage_row = QHBoxLayout()
         self.storage_label = QLineEdit(str(self.data_dir))
-        self.storage_label.setReadOnly(True)
         self.storage_label.setMinimumHeight(38)
-        self.storage_label.setToolTip("项目数据的保存位置；可选中复制路径，项目运行期间不能更改。\n" + str(self.data_dir))
-        self.storage_button = button("选择目录", self.browse_storage, icon_name="browse")
-        self.storage_button.setToolTip("更改新项目的数据保存位置，只接受 D 或 E 盘目录；项目运行期间锁定。")
+        self.storage_label.setToolTip("输入项目根目录后按回车或移开焦点应用；根目录须位于 D 或 E 盘，项目运行期间锁定。")
+        self.storage_label.editingFinished.connect(self.apply_root_directory)
+        self.storage_button = button("选择根目录", self.browse_storage, icon_name="browse")
+        self.storage_button.setToolTip("选择项目根目录；归档、配置和分析输出保存在其中，下方显示相对路径。")
         self.open_storage_button = button("打开目录", self.open_data_directory, icon_name="folder")
-        self.open_storage_button.setToolTip("在文件资源管理器中打开当前数据保存目录，查看归档、分析结果及回执。")
+        self.open_storage_button.setToolTip("在文件资源管理器中打开项目根目录。")
         storage_row.addWidget(self.storage_label, 1)
         storage_row.addWidget(self.storage_button)
         storage_row.addWidget(self.open_storage_button)
         fields.addLayout(storage_row)
-        layout.addWidget(settings)
-        controls, content = card()
-        status_row = QHBoxLayout()
-        status_row.addWidget(label("采集控制", "section"))
-        status_row.addStretch()
-        self.badge = label("项目未开始", "badge")
-        self.badge.setWordWrap(True)
-        self.badge.setToolTip("当前项目的真实采集与分析状态。“已封存 · 采集与分析完整”表示收到后端最终归档回执。")
-        status_row.addWidget(self.badge)
-        content.addLayout(status_row)
-        actions = QHBoxLayout()
-        self.new_button = button("新建项目", self.new_session, icon_name="new_session")
-        self.new_button.setToolTip("按上方名称和配置创建新的试验记录及归档文件，重置当前实时显示；已有归档保留。项目运行期间需先结束并封存，之后才能另建项目。")
-        self.capture_button = button("开始采集", self.start_capture, True, icon_name="capture_start")
-        self.end_button = button("结束并封存", self.end_session, icon_name="capture_stop")
-        self.end_button.setToolTip("停止本项目的所有采集源，写完已接收的数据并完成归档校验；等待状态显示已封存后，可新建下一项目。")
-        for action in (self.new_button, self.capture_button, self.end_button):
-            actions.addWidget(action, 1)
-        content.addLayout(actions)
-        help_text = label("先选择匹配的字典与规则，再新建项目并启用插件。内置演示也可直接启用，自动准备项目；采集仍需手动开始。", "muted")
+        self.relative_paths = label("归档：./项目名称_日期_时间_编号.avbus\n配置：config/\n分析：./归档文件名.avbus.analysis/", "muted")
+        self.relative_paths.setWordWrap(True)
+        self.relative_paths.setToolTip("这些是相对于项目根目录的路径；底部在新建项目后显示实际归档的相对路径。")
+        fields.addWidget(self.relative_paths)
+        basic_layout.addWidget(settings)
+        help_text = label("在“字典与规则”页直接编辑并保存配置。启用插件后，点击左下角“开始采集”。", "muted")
         help_text.setWordWrap(True)
-        content.addWidget(help_text)
-        layout.addWidget(controls)
-        layout.addStretch()
+        basic_layout.addWidget(help_text)
+        basic_layout.addStretch()
+        self.project_tabs.addTab(basics, "项目与目录")
+        editor_page = QWidget()
+        editor_layout = QVBoxLayout(editor_page)
+        editor_layout.setContentsMargins(0, 16, 0, 0)
+        self.config_editor = ConfigurationEditor(configuration)
+        self.config_editor.dirty_changed.connect(self.configuration_edited)
+        editor_layout.addWidget(self.config_editor, 1)
+        actions = QHBoxLayout()
+        self.config_feedback = label("已载入", "muted")
+        self.config_feedback.setWordWrap(True)
+        actions.addWidget(self.config_feedback, 1)
+        self.reload_configuration_button = button("放弃修改", self.reload_configuration)
+        self.reload_configuration_button.setToolTip("重新载入当前已保存配置，放弃尚未保存的表单修改。")
+        self.save_configuration_button = button("保存配置", self.save_configuration, True, icon_name="settings")
+        self.save_configuration_button.setToolTip("校验全部参数、引用和规则，成功后保存到根目录的 config/，用于下一项目；原模板保留。")
+        actions.addWidget(self.reload_configuration_button)
+        actions.addWidget(self.save_configuration_button)
+        editor_layout.addLayout(actions)
+        self.project_tabs.addTab(editor_page, "字典与规则")
+        layout.addWidget(self.project_tabs, 1)
         return page
 
     def build_monitor(self):
@@ -400,7 +438,7 @@ class MainWindow(QMainWindow):
         self.replace_button = button("替换插件", self.replace_source, icon_name="replace_source")
         self.remove_button = button("移除源", lambda: self.source_action("remove"))
         self.add_button.setToolTip("使用插件创建一个新的采集数据入口；同一插件可以创建多路源。")
-        self.start_button.setToolTip("只启动当前选中的这一采集源；项目设置中的“开始采集”会启动所有已启用且就绪的来源。")
+        self.start_button.setToolTip("只启动当前选中的这一采集源；左下角“开始采集”会启动所有已启用且就绪的来源。")
         self.stop_button.setToolTip("只停止当前选中的这一采集源，同一插件下的其他来源继续运行。")
         self.replace_button.setToolTip("更换当前采集源使用的插件及配置，保留逻辑源名称；新来源进入就绪状态。")
         self.remove_button.setToolTip("从当前项目移除选中的采集源，已经保存的原始数据仍保留。")
@@ -539,21 +577,128 @@ class MainWindow(QMainWindow):
         self.heading.setText(["总线监测工作台", "离线归档分析", "插件中心", "数据关联工作区", "项目设置"][index])
 
     def browse_configuration(self):
-        path, _ = QFileDialog.getOpenFileName(self, "选择字典与规则", self.config_path.text(), "配置 (*.ini)")
+        path, _ = QFileDialog.getOpenFileName(self, "导入字典与规则", str(self.configuration_path), "配置 (*.ini)")
         if path:
-            self.config_path.setText(path)
-            self.config_path.setToolTip("本项目使用的解析字典与分析规则配置；可选中复制路径。\n" + path)
+            self.load_configuration(path)
+
+    def load_configuration(self, path, customized=True):
+        try:
+            self.config_editor.load_file(path)
+        except (OSError, UnicodeError, ConfigurationError, ValueError) as error:
+            self.on_error("配置载入失败：" + str(error))
+            return
+        self.configuration_path = Path(path).resolve()
+        self.configuration_customized = customized
+        self.config_feedback.setText("已载入 · 可在此编辑")
+        self.update_relative_paths()
+
+    def reload_configuration(self):
+        try:
+            self.config_editor.load_file(self.configuration_path)
+        except (OSError, UnicodeError, ConfigurationError, ValueError) as error:
+            self.on_error("配置重新载入失败：" + str(error))
+            return
+        self.config_feedback.setText("已放弃修改")
+
+    def configuration_edited(self, dirty):
+        self.config_feedback.setText("有未保存的修改" if dirty else "已保存")
+        self.on_active(self.client.active)
+
+    def save_configuration(self):
+        if not self.apply_root_directory():
+            return
+        try:
+            text = self.config_editor.serialize()
+            directory = self.data_dir / "config"
+            directory.mkdir(parents=True, exist_ok=True)
+            self.configuration_candidate = directory / ("draft-" + uuid4().hex + ".ini")
+            self.configuration_candidate.write_text(text, encoding="utf-8")
+        except (OSError, ValueError) as error:
+            self.config_feedback.setText("保存失败：" + str(error))
+            self.on_error(self.config_feedback.text())
+            return
+        self.config_feedback.setText("校验中")
+        suffix = ".exe" if os.name == "nt" else ""
+        self.configuration_process.start(str(self.bin_dir / ("bus_analyze" + suffix)),
+                                         ["--validate-config", str(self.configuration_candidate)])
+        self.on_active(self.client.active)
+
+    def configuration_validated(self, code, exit_status):
+        error = bytes(self.configuration_process.readAllStandardError()).decode("utf-8")
+        self.configuration_process.readAllStandardOutput()
+        candidate = self.configuration_candidate
+        self.configuration_candidate = None
+        if code != 0 or exit_status != QProcess.ExitStatus.NormalExit:
+            candidate.unlink()
+            self.config_feedback.setText("配置无效：" + error.strip())
+            self.on_error(self.config_feedback.text())
+        else:
+            path = candidate.with_name("project-" + candidate.stem.removeprefix("draft-") + ".ini")
+            try:
+                candidate.rename(path)
+            except OSError as failure:
+                self.config_feedback.setText("配置保存失败：" + str(failure))
+                self.on_error(self.config_feedback.text())
+            else:
+                self.configuration_path = self.config_editor.path = path
+                self.configuration_customized = True
+                self.config_editor.set_dirty(False)
+                self.config_feedback.setText("已保存")
+                self.update_relative_paths()
+                self.set_project_state("等待中", "配置已通过后端校验，下一项目使用当前保存版本。")
+                self.message.setText("配置已保存，可新建项目。")
+                self.message.show()
+        self.on_active(self.client.active)
+        if self.close_pending:
+            self.close()
+
+    def configuration_validation_error(self, error):
+        if error == QProcess.ProcessError.FailedToStart:
+            self.configuration_candidate.unlink()
+            self.configuration_candidate = None
+            self.config_feedback.setText("无法启动配置校验：" + self.configuration_process.errorString())
+            self.on_error(self.config_feedback.text())
+            self.on_active(self.client.active)
+            if self.close_pending:
+                self.close()
+
+    def apply_root_directory(self):
+        try:
+            text = self.storage_label.text().strip()
+            if not text:
+                raise ValueError("项目根目录不能为空。")
+            directory = writable_data_path(text)
+            directory.mkdir(parents=True, exist_ok=True)
+        except (ValueError, OSError) as error:
+            self.on_error(str(error))
+            return False
+        changed = directory != self.data_dir
+        self.data_dir = directory
+        self.storage_label.setText(str(directory))
+        self.storage_label.setToolTip("项目根目录；运行期间锁定。\n" + str(directory))
+        self.relations_page.definitions_path = directory / "relations.json"
+        self.update_relative_paths()
+        if changed:
+            self.set_project_state("等待中", "根目录已更新，新项目使用当前目录。")
+        return True
+
+    def update_relative_paths(self):
+        configuration = self.configuration_path
+        display = configuration.relative_to(self.data_dir).as_posix() if configuration.is_relative_to(self.data_dir) else "根目录外 / " + configuration.name
+        self.config_path.setText(display)
+        self.config_path.setToolTip("配置位置；根目录内显示相对路径。\n" + str(configuration))
+        if self.archive is not None and self.archive_root == self.data_dir:
+            self.archive_path.setText(self.archive.relative_to(self.data_dir).as_posix())
+            self.archive_path.setToolTip(str(self.archive))
+        else:
+            self.archive_path.clear()
+            self.archive_path.setToolTip("根目录：" + str(self.data_dir))
 
     def browse_storage(self):
-        path = QFileDialog.getExistingDirectory(self, "选择 D / E 盘数据目录", str(self.data_dir))
+        path = QFileDialog.getExistingDirectory(self, "选择 D / E 盘项目根目录", str(self.data_dir))
         if path:
-            try:
-                self.data_dir = writable_data_path(path)
-                self.relations_page.definitions_path = self.data_dir / "relations.json"
-                self.storage_label.setText(str(self.data_dir))
-                self.storage_label.setToolTip("项目数据的保存位置；可选中复制路径，项目运行期间不能更改。\n" + str(self.data_dir))
-            except ValueError as error:
-                self.on_error(str(error))
+            self.storage_label.setText(path)
+            self.apply_root_directory()
 
     def open_data_directory(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))
@@ -561,8 +706,12 @@ class MainWindow(QMainWindow):
     def new_session(self):
         if self.client.active:
             return
+        if not self.apply_root_directory():
+            return
         try:
-            configuration = Path(self.config_path.text()).resolve()
+            if self.config_editor.dirty:
+                raise ValueError("请先在项目设置中保存字典与规则。")
+            configuration = self.configuration_path
             if not configuration.is_file():
                 raise ValueError("请先选择有效的字典与规则配置。")
             name = self.project_name.text().strip()
@@ -570,6 +719,7 @@ class MainWindow(QMainWindow):
                 raise ValueError("项目名称为空或含有文件名不支持的字符。")
             self.data_dir.mkdir(parents=True, exist_ok=True)
             self.archive = writable_data_path(str(self.data_dir / f"{name}_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:6]}.avbus"))
+            self.archive_root = self.data_dir
             self.parameter_model.clear()
             self.event_model.clear()
             self.samples.clear()
@@ -584,15 +734,13 @@ class MainWindow(QMainWindow):
             self.last_metadata = None
             self.display_omitted = 0
             self.display_events_omitted = 0
-            self.session_is_demo = configuration == self.demo_configuration.resolve()
+            self.session_is_demo = self.demo_pending or self.config_editor.matches_plugin(self.plugin_center.cards["demo"].definition)
             for value in self.metric_values:
                 value.setText("0")
             self.badge.setStyleSheet("")
             self.client.start(self.archive, configuration)
-            self.badge.setText("正在创建项目…")
-            self.recording_status.setText("正在创建项目")
-            self.archive_path.setText(str(self.archive))
-            self.archive_path.setToolTip(str(self.archive))
+            self.set_project_state("准备中", "正在创建项目及原始归档。")
+            self.update_relative_paths()
             self.message.setText("正在创建：" + self.archive.name)
             self.message.show()
             self.message.setToolTip(str(self.archive))
@@ -604,14 +752,17 @@ class MainWindow(QMainWindow):
             self.on_error(str(error))
 
     def start_demo(self):
-        self.config_path.setText(str(self.demo_configuration))
-        self.config_path.setToolTip("本项目使用的解析字典与分析规则配置；可选中复制路径。\n" + str(self.demo_configuration))
+        if self.configuration_customized and not self.config_editor.matches_plugin(self.plugin_center.cards["demo"].definition):
+            raise ValueError("当前配置已自定义。请在项目设置中选择合成演示模板，再编辑和保存；已有修改不会被覆盖。")
+        if not self.configuration_customized:
+            self.load_configuration(self.demo_configuration, customized=False)
         self.demo_pending = True
         self.new_session()
 
     def refresh_plugins(self):
         self.plugin_center.refresh(self.source_configs, self.latest_snapshot, self.client.active,
-            self.client.is_ready, self.busy or self.plugin_action_pending, self.client.closing and self.client.active,
+            self.client.is_ready, self.busy or self.plugin_action_pending or self.config_editor.dirty or
+            self.configuration_process.state() != QProcess.ProcessState.NotRunning, self.client.closing and self.client.active,
             self.disabled_plugins)
         ready = any(source["status"]["state"] in {"configured", "stopped"}
                     for key, sources in self.plugin_center.sources_by_plugin.items()
@@ -629,7 +780,7 @@ class MainWindow(QMainWindow):
                     if source["status"]["state"] in {"configured", "stopped"}:
                         self.client.send("start", source["id"])
         self.message.setText("正在开始采集…")
-        self.recording_status.setText("正在开始采集")
+        self.set_project_state("启动中", "正在启动已启用且就绪的采集源。")
         self.navigate(0)
         self.refresh_plugins()
 
@@ -650,8 +801,8 @@ class MainWindow(QMainWindow):
         try:
             if definition["mode"] == "preset":
                 configuration = Path(__file__).resolve().parents[2] / "config" / definition["configuration"]
-                if self.client.active and Path(self.config_path.text()).resolve() != configuration.resolve():
-                    raise ValueError("请先结束当前项目，再启用使用配套字典的插件。")
+                if (self.client.active or self.configuration_customized) and not self.config_editor.matches_plugin(definition):
+                    raise ValueError("当前配置没有此插件对应的参数；请在项目设置选择其配套模板后编辑和保存。运行中的项目需先封存。")
                 sources = [(preset["source"], definition["path"], preset["config"]) for preset in definition["presets"]]
                 for source, plugin, config in sources:
                     if source in self.source_configs and os.path.normcase(str(Path(self.source_configs[source][1]).resolve())) != os.path.normcase(str(Path(plugin).resolve())):
@@ -662,8 +813,8 @@ class MainWindow(QMainWindow):
                         if source not in self.source_configs:
                             self.client.send("add", source, plugin, config)
                 else:
-                    self.config_path.setText(str(configuration))
-                    self.config_path.setToolTip("本项目使用的解析字典与分析规则配置；可选中复制路径。\n" + str(configuration))
+                    if not self.configuration_customized:
+                        self.load_configuration(configuration, customized=False)
                     self.pending_plugin_sources.extend(sources)
                     self.new_session()
             elif definition["mode"] == "demo":
@@ -701,7 +852,7 @@ class MainWindow(QMainWindow):
                         self.client.send("add", *args)
             if self.client.active:
                 self.disabled_plugins.discard(definition["id"])
-                self.message.setText("正在准备：" + definition["name"] + "。就绪后请点击“项目设置”中的“开始采集”。")
+                self.message.setText("正在准备：" + definition["name"] + "。就绪后请点击左下角“开始采集”。")
                 self.navigate(0)
             self.refresh_plugins()
         except ValueError as error:
@@ -719,16 +870,13 @@ class MainWindow(QMainWindow):
         self.refresh_plugins()
 
     def on_ready(self, message):
-        self.recording_status.setText("等待开始采集")
+        self.set_project_state("等待中", "项目已就绪，启用插件后点击左下角“开始采集”。")
         self.log_message("项目已创建：" + message["archive"])
         self.log_message(f"后端版本 {message['build']['version']} · {message['build']['revision']}")
-        self.message.setText("项目已就绪；启用插件后，到“项目设置”点击“开始采集”。归档：" + self.archive.name)
+        self.message.setText("项目已就绪；启用插件后，点击左下角“开始采集”。")
         if self.demo_pending:
             self.demo_pending = False
             self.queue_demo_sources()
-            self.badge.setText("合成演示 · 等待开始采集")
-        else:
-            self.badge.setText("项目已就绪 · 等待采集源")
         for source, plugin, config in self.pending_plugin_sources:
             self.client.send("add", source, plugin, config)
         self.pending_plugin_sources.clear()
@@ -736,8 +884,7 @@ class MainWindow(QMainWindow):
 
     def end_session(self):
         self.client.send("quit")
-        self.badge.setText("正在停止采集并封存…")
-        self.recording_status.setText("正在停止并封存")
+        self.set_project_state("封存中", "正在停止采集源、写完剩余数据并封存归档。")
         self.end_button.setEnabled(False)
         self.update_source_actions()
 
@@ -787,17 +934,19 @@ class MainWindow(QMainWindow):
         self.last_counts = now, snapshot["recorded"]
         self.last_snapshot_time = now
         if not snapshot["healthy"]:
-            self.recording_status.setText("保存故障")
-        elif self.client.closing:
-            self.recording_status.setText("正在停止并封存")
-        elif any(source["status"]["state"] == "running" for source in snapshot["sources"]):
-            self.recording_status.setText("采集中")
+            self.set_project_state("异常", snapshot["failure"], "alert")
+        elif not snapshot["analysis_healthy"]:
+            self.set_project_state("异常", snapshot["analysis_failure"], "alert")
         elif snapshot["capture_degraded"]:
-            self.recording_status.setText("采集已停止 · 请检查源状态")
+            self.set_project_state("已降级", "采集存在故障或丢弃，请检查源状态及日志。", "alert")
+        elif self.client.closing:
+            self.set_project_state("封存中", "正在停止采集源并排空保存队列。")
+        elif any(source["status"]["state"] == "running" for source in snapshot["sources"]):
+            self.set_project_state("采集中", "原始数据正在自动保存到当前归档。", "running")
         elif any(source["status"]["state"] == "stopped" for source in snapshot["sources"]):
-            self.recording_status.setText("已暂停采集")
+            self.set_project_state("已暂停", "当前来源已停止；已启用的来源可以再次开始采集。")
         else:
-            self.recording_status.setText("等待开始采集")
+            self.set_project_state("等待中", "启用插件后，点击左下角“开始采集”。")
         if self.message.text() == "正在开始采集…" and any(
                 source["status"]["state"] == "running" for source in snapshot["sources"]):
             self.message.setText("采集中 · 原始归档：" + self.archive.name)
@@ -846,22 +995,11 @@ class MainWindow(QMainWindow):
         self.display_note.setText(f"趋势最近 512 点 · 界面跳过 {self.display_omitted:,} 样本 / {self.display_events_omitted:,} 事件 · 完整结果写入文件")
         self.display_note.setToolTip(f"参数表最多 4096 项；超过表容量的更新：{self.parameter_model.omitted:,}。事件表保留最近 200 条。")
         if not snapshot["healthy"]:
-            self.badge.setText("原始记录故障 · 查看日志")
             self.message.setText(snapshot["failure"])
             self.message.show()
         elif not snapshot["analysis_healthy"]:
-            self.badge.setText("分析不完整 · 原始记录仍在采集")
             self.message.setText(snapshot["analysis_failure"])
             self.message.show()
-        elif snapshot["capture_degraded"]:
-            self.badge.setText("采集降级 · 请查看源状态及日志")
-        else:
-            running = sum(source["status"]["state"] == "running" for source in snapshot["sources"])
-            self.badge.setText(f"{'合成演示' if self.session_is_demo else '正在记录'} · {running} 个源运行中" if running else
-                              f"{'合成演示' if self.session_is_demo else '项目已就绪'} · 等待开始采集")
-        degraded = not snapshot["healthy"] or not snapshot["analysis_healthy"] or snapshot["capture_degraded"]
-        self.badge.setStyleSheet(ALERT_STYLE if degraded else RUNNING_STYLE if any(
-            source["status"]["state"] == "running" for source in snapshot["sources"]) else "")
         self.refresh_plugins()
 
     def select_trend(self, index):
@@ -870,10 +1008,9 @@ class MainWindow(QMainWindow):
     def on_sealed(self, metadata):
         self.last_metadata = metadata
         healthy = metadata["recording_healthy"]
-        self.recording_status.setText("已结束 · 归档已封存" if healthy else "已结束 · 保存故障")
         complete = healthy and metadata["capture_status"] == "complete" and metadata["analysis_status"] == "complete"
-        self.badge.setText("已封存 · 采集与分析完整" if complete else "项目结束 · 请检查降级 / 故障回执")
-        self.badge.setStyleSheet("" if complete else ALERT_STYLE)
+        state = "已封存" if complete else "已降级" if healthy else "异常"
+        self.set_project_state(state, f"原始记录健康：{healthy}；采集：{metadata['capture_status']}；分析：{metadata['analysis_status']}。", "running" if complete else "alert")
         self.metric_values[0].setText(f"{metadata['recorded']:,}")
         self.metric_values[1].setText(f"{metadata['samples']:,}")
         self.metric_values[2].setText(f"{metadata['results']:,}")
@@ -898,7 +1035,7 @@ class MainWindow(QMainWindow):
                 self.relations_page.feed(unseen)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             self.log_message("封存后的显示数据读取失败：" + str(error))
-        self.message.setText(f"已结束：记录 {metadata['recorded']:,} 帧，拒绝 {metadata['dropped']:,} 帧；回执 {self.archive}.session.json")
+        self.message.setText(f"已保存 {metadata['recorded']:,} 帧，拒绝 {metadata['dropped']:,} 帧；回执：{self.archive.name}.session.json")
         self.message.show()
         self.log_message("项目结束，已收到封存回执：" + metadata["capture_status"] + " / " + metadata["analysis_status"])
         self.offline_archive.setText(str(self.archive))
@@ -908,10 +1045,13 @@ class MainWindow(QMainWindow):
     def on_active(self, active):
         if not active:
             self.plugin_action_pending = False
-            if self.archive is not None:
-                self.recording_status.setText("采集已停止 · 等待封存回执")
-        for widget in (self.new_button, self.config_button, self.storage_button, self.project_name):
-            widget.setEnabled(not active)
+        editable = not active and self.configuration_process.state() == QProcess.ProcessState.NotRunning
+        for widget in (self.storage_button, self.storage_label, self.project_name, self.config_editor):
+            widget.setEnabled(editable)
+        for widget in (self.new_button, self.config_button, self.preset_selector):
+            widget.setEnabled(editable and not self.config_editor.dirty)
+        self.save_configuration_button.setEnabled(editable and self.config_editor.dirty)
+        self.reload_configuration_button.setEnabled(editable and self.config_editor.dirty)
         self.end_button.setEnabled(active and not self.client.closing)
         self.update_source_actions()
         self.refresh_plugins()
@@ -946,9 +1086,15 @@ class MainWindow(QMainWindow):
         if self.client.active and self.last_snapshot_time and not self.client.closing:
             age = time.monotonic() - self.last_snapshot_time
             if age > 2:
-                self.badge.setText(f"等待后端响应 · {age:.0f} s 未刷新")
-                self.badge.setStyleSheet(ALERT_STYLE)
-                self.recording_status.setText("状态未刷新 · 保存状态待确认")
+                self.set_project_state("状态超时", f"后端 {age:.0f} 秒未刷新，保存状态待确认。", "alert")
+
+    def set_project_state(self, state, detail, tone=None):
+        self.badge.setText(state)
+        self.recording_status.setText(state)
+        self.badge.setToolTip(detail)
+        self.recording_status.setToolTip(detail)
+        self.badge.setStyleSheet(ALERT_STYLE if tone == "alert" else RUNNING_STYLE if tone == "running"
+                                else f"background:{ACTIVE};color:{MUTED};")
 
     def log_message(self, text):
         self.log.appendPlainText(f"{datetime.now():%H:%M:%S}  {text}")
@@ -958,12 +1104,11 @@ class MainWindow(QMainWindow):
         self.message.show()
         self.log_message("错误 · " + text)
         if not self.client.active:
-            self.badge.setText("操作失败 · 查看日志")
-        self.badge.setStyleSheet(ALERT_STYLE)
+            self.set_project_state("异常", text, "alert")
 
     def on_exit(self, code):
         if self.archive is not None and self.last_metadata is None:
-            self.recording_status.setText("采集已停止 · 未确认封存")
+            self.set_project_state("未封存", "采集已停止，但没有收到最终封存回执。", "alert")
         if self.close_pending:
             self.close()
 
@@ -1094,6 +1239,10 @@ class MainWindow(QMainWindow):
                     min(self.height(), available.height() - (frame.height() - self.height())))
 
     def closeEvent(self, event):
+        if self.configuration_process.state() != QProcess.ProcessState.NotRunning:
+            self.close_pending = True
+            event.ignore()
+            return
         if self.offline_mode:
             self.message.setText("离线分析正在运行；完成后可关闭窗口。")
             event.ignore()

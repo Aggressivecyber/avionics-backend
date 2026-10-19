@@ -98,7 +98,6 @@ class FrontendIntegration(unittest.TestCase):
         return None
 
     def click_project_action(self, control):
-        self.window.navigate(4)
         self.assertTrue(control.isVisible())
         QTest.mouseClick(control, Qt.MouseButton.LeftButton)
 
@@ -116,10 +115,14 @@ class FrontendIntegration(unittest.TestCase):
                 window.navigate(page)
                 QTest.qWait(30)
                 self.assertEqual((window.width(), window.height()), (width, height))
-                controls = [window.heading, window.recording_status, window.archive_path]
-                if page == 4:
+                controls = [window.heading, window.recording_status, window.archive_path,
+                            window.new_button, window.capture_button, window.end_button, window.badge]
+                if page == 4 and window.project_tabs.currentIndex() == 0:
                     controls += [window.project_name, window.config_path, window.storage_label,
-                                 window.new_button, window.capture_button, window.end_button, window.badge]
+                                 window.preset_selector]
+                elif page == 4:
+                    controls += [window.config_editor.entries, window.config_editor.scroll,
+                                 window.save_configuration_button, window.reload_configuration_button]
                 if page == 3:
                     controls += [window.relations_page.input_view, window.relations_page.create_button,
                                  window.relations_page.relationships, window.relations_page.plot]
@@ -160,7 +163,7 @@ class FrontendIntegration(unittest.TestCase):
         QTest.qWait(550)
         self.assertEqual(window.sources.rowCount(), 4)
         self.assertGreater(len(window.plot.points), 5)
-        self.assertIn("合成演示", window.badge.text())
+        self.assertEqual(window.badge.text(), "采集中")
         self.assertTrue(window.grab().save(str(args.output / "monitor.png")))
         # A stale cursor after actual >600 samples must report bounded-buffer omissions.
         # Use the measured sample count, independent of Windows SDK/timer scheduling.
@@ -297,9 +300,9 @@ class FrontendIntegration(unittest.TestCase):
         window.client.process.kill()
         wait_until(lambda: not window.client.active)
         self.assertIsNone(window.last_metadata)
-        self.assertIn("失败", window.badge.text())
+        self.assertEqual(window.badge.text(), "未封存")
         self.assertIn("未收到封存回执", window.message.text())
-        self.assertIn("未确认封存", window.recording_status.text())
+        self.assertEqual(window.recording_status.text(), "未封存")
         window.offline_archive.setText(str(window.archive))
         window.start_offline("inspect")
         wait_until(lambda: window.offline_mode is None)
@@ -311,7 +314,7 @@ class FrontendIntegration(unittest.TestCase):
     def test_05_plugin_cards_and_named_relationships(self):
         window = self.window
         self.assertEqual(window.pages.currentIndex(), 2)
-        self.assertEqual(window.recording_status.text(), "未开始采集")
+        self.assertEqual(window.recording_status.text(), "等待中")
         self.assertEqual(window.archive_path.text(), "")
         self.assertFalse(hasattr(window, "demo_button"))
         self.assertFalse(window.brand_mark.pixmap().isNull())
@@ -323,9 +326,9 @@ class FrontendIntegration(unittest.TestCase):
                         min(metrics.horizontalAdvance(c) for c in "0123456789"), 0.01)
         for page_index in range(5):
             window.navigate(page_index)
-            self.assertEqual(window.capture_button.isVisible(), page_index == 4)
-            self.assertEqual(window.new_button.isVisible(), page_index == 4)
-            self.assertEqual(window.end_button.isVisible(), page_index == 4)
+            self.assertTrue(window.capture_button.isVisible())
+            self.assertTrue(window.new_button.isVisible())
+            self.assertTrue(window.end_button.isVisible())
             self.assertFalse(window.capture_button.isEnabled())
         window.navigate(2)
         self.assertFalse(any("关联" in window.monitor_tabs.tabText(i) for i in range(window.monitor_tabs.count())))
@@ -357,12 +360,12 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(window.latest_snapshot["recorded"], 0)
         self.assertEqual(window.latest_snapshot["samples"], 0)
         self.assertEqual(window.parameter_model.rowCount(), 0)
-        self.assertEqual(window.recording_status.text(), "等待开始采集")
-        self.assertEqual(window.archive_path.text(), str(window.archive))
+        self.assertEqual(window.recording_status.text(), "等待中")
+        self.assertEqual(window.archive_path.text(), window.archive.relative_to(window.data_dir).as_posix())
         self.assertEqual(window.archive_path.toolTip(), str(window.archive))
         self.assertTrue(window.archive.is_file())
         self.assertTrue(all(source["status"]["state"] == "configured" for source in window.latest_snapshot["sources"]))
-        self.assertIn("待开始", demo.status.text())
+        self.assertEqual(demo.status.text(), "等待中")
         window.navigate(2)
         QTest.qWait(30)
         self.assertTrue(window.grab().save(str(args.output / "plugins-ready.png")))
@@ -521,18 +524,18 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: replay.stop_button.isEnabled())
         QTest.mouseClick(replay.stop_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: self.source_state("replay") == "已停止")
-        self.assertEqual(window.recording_status.text(), "已暂停采集")
+        self.assertEqual(window.recording_status.text(), "已暂停")
         window.end_session()
         wait_until(lambda: not window.client.active)
-        self.assertEqual(window.recording_status.text(), "已结束 · 归档已封存")
-        self.assertEqual(window.archive_path.text(), str(window.archive))
+        self.assertEqual(window.recording_status.text(), "已封存")
+        self.assertEqual(window.archive_path.text(), window.archive.relative_to(window.data_dir).as_posix())
         reopened = MainWindow(args.bin_dir, self.data_dir, self.configuration)
         self.assertEqual([r.name for r in reopened.relations_page.engine.relations], ["双路温差", "温差条件", "三路组合"])
         reopened.close()
         receipt["checks"].append({"name": self._testMethodName, "status": "passed",
                                    "plugin_details_verified": True, "named_relations": 3,
                                    "enable_without_acquisition_verified": True,
-                                   "project_controls_concentrated_in_settings": True,
+                                   "capture_controls_in_left_rail": True,
                                    "persistent_archive_status_verified": True,
                                    "splitter_drag_verified": dragged, "scrollbar_drag_verified": True,
                                    "dropdown_keyboard_selection_verified": True,
@@ -551,7 +554,7 @@ class FrontendIntegration(unittest.TestCase):
         QTest.qWait(350)
         self.assertEqual(window.latest_snapshot["recorded"], 0)
         self.assertEqual(window.parameter_model.rowCount(), 0)
-        self.assertEqual(Path(window.config_path.text()).name, "mil1553b-demo.ini")
+        self.assertEqual(window.configuration_path.name, "mil1553b-demo.ini")
         self.click_project_action(window.capture_button)
         wait_until(lambda: window.parameter_model.rowCount() == 7)
         wait_until(lambda: window.latest_snapshot["recorded"] > 40)
@@ -695,7 +698,7 @@ class FrontendIntegration(unittest.TestCase):
         with patch("ground_station.window.QFileDialog.getExistingDirectory", return_value=str(storage)):
             QTest.mouseClick(window.storage_button, Qt.MouseButton.LeftButton)
         self.assertEqual(window.data_dir, storage)
-        self.assertEqual(window.config_path.text(), str(window.demo_configuration))
+        self.assertEqual(window.configuration_path, window.demo_configuration)
         self.click_project_action(window.new_button)
         wait_until(lambda: window.client.is_ready and "recorded" in window.latest_snapshot)
         self.assertEqual(window.pages.currentIndex(), 4)
@@ -720,7 +723,7 @@ class FrontendIntegration(unittest.TestCase):
         self.capture_layouts("project-active", (4,))
         self.click_project_action(window.end_button)
         wait_until(lambda: not window.client.active)
-        self.assertEqual(window.badge.text(), "已封存 · 采集与分析完整")
+        self.assertEqual(window.badge.text(), "已封存")
         self.assertTrue(window.new_button.isEnabled())
         self.assertFalse(window.capture_button.isEnabled())
         self.assertFalse(window.end_button.isEnabled())
@@ -739,6 +742,129 @@ class FrontendIntegration(unittest.TestCase):
             "configuration_and_directory_selection_verified": True,
             "controls_locked_while_active": True, "manual_capture_preserved": True,
             "seal_then_new_project_preserves_archive": True, "plugin_source_ownership_visible": True})
+
+    def test_09_configuration_forms_root_and_compact_status(self):
+        window = self.window
+        window.navigate(4)
+        root = self.data_dir / "用户指定根目录"
+        window.storage_label.setText(str(root))
+        window.storage_label.editingFinished.emit()
+        self.assertEqual(window.data_dir, root)
+        self.assertTrue(root.is_dir())
+        if os.name == "nt":
+            window.storage_label.setText("C:/invalid-project-root")
+            window.storage_label.editingFinished.emit()
+            self.assertEqual(window.data_dir, root)
+            self.assertIn("D 盘或 E 盘", window.message.text())
+            window.storage_label.setText(str(root))
+            window.storage_label.editingFinished.emit()
+        window.preset_selector.setCurrentIndex(1)
+        window.preset_selector.activated.emit(1)
+        original = window.demo_configuration.read_bytes()
+        window.project_tabs.setCurrentIndex(1)
+        editor = window.config_editor
+        editor.add_section("parameter")
+        editor.remove_section()
+        for row in range(editor.entries.count()):
+            if editor.entries.item(row).data(Qt.ItemDataRole.UserRole) == "parameter temperature_a":
+                editor.entries.setCurrentRow(row)
+                break
+        editor.fields["scale"].setText("0.002")
+        editor.fields["offset"].setText("1")
+        editor.fields["bit_width"].setText("0")
+        self.assertTrue(editor.dirty)
+        self.assertFalse(window.new_button.isEnabled())
+        self.assertFalse(window.plugin_center.cards["demo"].start_button.isEnabled())
+        previous = window.configuration_path
+        QTest.mouseClick(window.save_configuration_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.configuration_candidate is None)
+        self.assertIn("配置无效", window.config_feedback.text())
+        self.assertEqual(window.configuration_path, previous)
+        self.assertTrue(editor.dirty)
+        editor.fields["bit_width"].setText("64")
+        self.capture_layouts("configuration-dictionary", (4,))
+        editor.group.setCurrentIndex(1)
+        for row in range(editor.entries.count()):
+            if editor.entries.item(row).data(Qt.ItemDataRole.UserRole) == "consistency sensor_agreement":
+                editor.entries.setCurrentRow(row)
+                break
+        editor.fields["tolerance"].setText("100")
+        editor.add_section("consistency")
+        editor.name.setText("温差验收")
+        self.assertTrue(editor.rename_section())
+        editor.fields["tolerance"].setText("100")
+        self.capture_layouts("configuration-rules", (4,))
+        QTest.mouseClick(window.save_configuration_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.configuration_candidate is None)
+        self.assertEqual(window.config_feedback.text(), "已保存")
+        saved = window.configuration_path
+        self.assertTrue(saved.is_relative_to(root / "config"))
+        self.assertEqual(window.config_path.text(), saved.relative_to(root).as_posix())
+        self.assertEqual(window.config_path.toolTip().splitlines()[-1], str(saved))
+        self.assertEqual(window.demo_configuration.read_bytes(), original)
+        self.assertIn("[consistency 温差验收]", saved.read_text(encoding="utf-8"))
+        self.assertTrue(window.new_button.isEnabled())
+        window.reload_configuration()
+        self.assertEqual(editor.document["parameter temperature_a"]["scale"], "0.002")
+        self.assertEqual(editor.document["parameter temperature_a"]["offset"], "1")
+        self.assertEqual(editor.document["consistency sensor_agreement"]["tolerance"], "100")
+        window.load_configuration(saved)
+        self.assertTrue(editor.matches_plugin(window.plugin_center.cards["demo"].definition))
+        self.assertTrue(window.grab().save(str(args.output / "configuration-saved.png")))
+        self.click_project_action(window.new_button)
+        wait_until(lambda: window.client.is_ready)
+        self.assertFalse(editor.isEnabled())
+        self.assertFalse(window.storage_label.isEnabled())
+        window.navigate(2)
+        QTest.mouseClick(window.plugin_center.cards["demo"].start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.capture_button.isEnabled())
+        self.assertEqual(window.configuration_path, saved)
+        self.assertEqual(window.latest_snapshot["recorded"], 0)
+        self.assertEqual(window.badge.text(), "等待中")
+        for index in range(5):
+            window.navigate(index)
+            self.assertTrue(window.capture_controls.isVisible())
+            self.assertTrue(window.capture_button.isVisible())
+            bounds = window.capture_controls.rect().translated(window.capture_controls.mapTo(window, QPoint()))
+            self.assertLess(bounds.right(), window.heading.mapTo(window, QPoint()).x())
+        self.click_project_action(window.capture_button)
+        wait_until(lambda: window.parameter_model.rowCount() == 4)
+        temperature = next(sample for sample in window.parameter_model.rows if sample["parameter"] == "temperature_a")
+        self.assertGreater(temperature["value"], 40)
+        self.assertEqual(window.recording_status.text(), "采集中")
+        self.assertEqual(window.badge.text(), "采集中")
+        self.assertEqual(window.archive.parent, root)
+        self.assertEqual(window.archive_path.text(), window.archive.name)
+        self.assertEqual(window.archive_path.toolTip(), str(window.archive))
+        self.assertTrue(window.grab().save(str(args.output / "edited-configuration-live.png")))
+        self.click_project_action(window.end_button)
+        wait_until(lambda: not window.client.active)
+        self.assertEqual(window.badge.text(), "已封存")
+        self.assertEqual(window.recording_status.text(), "已封存")
+        self.assertEqual(Path(str(window.archive) + ".analysis/configuration.ini").read_bytes(), saved.read_bytes())
+        self.assertEqual(window.last_metadata["configuration_sha256"], digest(saved))
+        first_archive = window.archive
+        next_root = (Path("D:/avionics-builds/editor-root-tests") / args.output.name if os.name == "nt"
+                     else root / "下一根目录")
+        window.navigate(4)
+        window.project_tabs.setCurrentIndex(0)
+        window.storage_label.setText(str(next_root))
+        window.storage_label.editingFinished.emit()
+        self.assertEqual(window.data_dir, next_root)
+        self.assertEqual(window.archive_path.text(), "")
+        self.assertTrue(first_archive.is_file())
+        window.project_name.setText("新根目录项目")
+        self.click_project_action(window.new_button)
+        wait_until(lambda: window.client.is_ready)
+        self.assertEqual(window.archive.parent, next_root)
+        self.assertEqual(window.archive_path.text(), window.archive.name)
+        receipt["checks"].append({"name": self._testMethodName, "status": "passed",
+            "form_editing_roundtrip": True, "add_remove_and_rename": True,
+            "backend_rejects_invalid_field": True, "original_template_preserved": True,
+            "edited_config_used_by_live_decoder": True, "configuration_sha256": digest(saved),
+            "archive_configuration_snapshot_matches": True, "root_editable_when_idle": True,
+            "footer_relative_path_and_absolute_tooltip": True, "new_root_preserves_old_archive": True,
+            "left_bottom_controls_visible_on_all_pages": True, "short_states": ["等待中", "采集中", "已封存"]})
 
 
 if __name__ == "__main__":

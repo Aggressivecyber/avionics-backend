@@ -16,6 +16,12 @@ int main(int argc, char** argv) {
         for (auto& argument : arguments) argument_pointers.push_back(argument.data());
         argc = static_cast<int>(argument_pointers.size()); argv = argument_pointers.data();
         if (argc == 2 && std::string(argv[1]) == "--version") { writeBuildInfo(std::cout); std::cout << '\n'; return 0; }
+        if (argc == 3 && std::string(argv[1]) == "--validate-config") {
+            const auto config = BackendConfiguration::load(pathFromUtf8(argv[2]));
+            std::cout << "{\"status\":\"valid\",\"configuration_sha256\":"
+                << jsonString(hexIdentity(config.document->sha256)) << "}\n";
+            return 0;
+        }
         if (argc == 3 && std::string(argv[1]) == "--fixture") {
             const SessionId fixture_id{0x46,0x49,0x58,0x54,0x55,0x52,0x45,0x01,0x80,0,0,0,0,0,0,1};
             ArchiveWriter writer(pathFromUtf8(argv[2]), fixture_id);
@@ -30,6 +36,7 @@ int main(int argc, char** argv) {
         }
         if (argc != 5 || std::string(argv[1]) != "--analyze") {
             std::cout << "Usage: bus_analyze --fixture NEW_ARCHIVE\n"
+                << "       bus_analyze --validate-config CONFIG_INI\n"
                 << "       bus_analyze --inspect INPUT_ARCHIVE\n"
                 << "       bus_analyze --analyze CONFIG_INI INPUT_ARCHIVE NEW_OUTPUT_DIRECTORY\n";
             return argc == 1 ? 0 : 2;
