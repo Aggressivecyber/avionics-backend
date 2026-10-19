@@ -68,7 +68,7 @@ def main():
             command = r'''$taskChildren=@(Get-CimInstance Win32_Process -Filter "ParentProcessId=__PID__" | Where-Object {$_.Name -eq 'bus_capture_worker.exe'} | Select-Object -ExpandProperty ProcessId)
 $taskModules=@((Get-Process -Id __PID__).Modules | ForEach-Object {$_.ModuleName})
 @{children=$taskChildren;modules=$taskModules} | ConvertTo-Json -Compress'''.replace("__PID__", str(parent.pid))
-            powershell = str(Path(env["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
+            powershell = str(Path(os.environ["SystemRoot"]) / "System32/WindowsPowerShell/v1.0/powershell.exe")
             observed = json.loads(subprocess.run([powershell, "-NoProfile", "-NonInteractive", "-Command", command],
                                                  capture_output=True, text=True, timeout=10, check=True, env=env,
                                                  creationflags=flags).stdout)
