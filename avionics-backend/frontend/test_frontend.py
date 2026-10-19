@@ -95,7 +95,12 @@ class FrontendIntegration(unittest.TestCase):
     def capture_layouts(self, stage, pages):
         window = self.window
         original_size, original_page = window.size(), window.pages.currentIndex()
-        for width, height in ((1440, 900), (1160, 780), (1920, 1080)):
+        for requested_width, requested_height in ((1440, 900), (1160, 780), (1920, 1080)):
+            width, height = requested_width, requested_height
+            if app.platformName() != "offscreen":
+                available = window.screen().availableGeometry()
+                width = min(width, available.width() - (window.frameGeometry().width() - window.width()))
+                height = min(height, available.height() - (window.frameGeometry().height() - window.height()))
             window.resize(width, height)
             for page in pages:
                 window.navigate(page)
@@ -121,7 +126,8 @@ class FrontendIntegration(unittest.TestCase):
                 screenshot = f"{stage}-page-{page}-{width}x{height}.png"
                 self.assertTrue(window.grab().save(str(args.output / screenshot)))
                 receipt["layouts"].append({"stage": stage, "page": page, "width": width,
-                                           "height": height, "screenshot": screenshot})
+                                           "height": height, "requested_width": requested_width,
+                                           "requested_height": requested_height, "screenshot": screenshot})
         window.resize(original_size)
         window.navigate(original_page)
 
