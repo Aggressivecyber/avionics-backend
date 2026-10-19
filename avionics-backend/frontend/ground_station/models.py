@@ -6,6 +6,8 @@ from PySide6.QtCore import QAbstractTableModel, QLineF, QModelIndex, QPointF, QR
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+from .theme import ACCENT, BORDER, MUTED, POSITIVE, SURFACE, WARNING
+
 
 def display_value(value):
     if isinstance(value, dict):
@@ -19,6 +21,7 @@ def display_value(value):
 
 class ParameterModel(QAbstractTableModel):
     headers = ["参数", "来源", "当前值", "单位", "质量", "记录索引", "代次"]
+    numeric_columns = {2, 5, 6}
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -35,19 +38,23 @@ class ParameterModel(QAbstractTableModel):
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             return self.headers[section]
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.TextAlignmentRole:
+            return (Qt.AlignmentFlag.AlignRight if section in self.numeric_columns else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         row = self.rows[index.row()]
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return (Qt.AlignmentFlag.AlignRight if index.column() in self.numeric_columns else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter
         if role == Qt.ItemDataRole.DisplayRole:
             values = [row["parameter"], row["source"], display_value(row["value"]), row["unit"],
                       "有效" if row["usable"] else " / ".join(row["quality"]),
                       str(row["record_index"]), str(row["generation"])]
             return values[index.column()]
         if role == Qt.ItemDataRole.ForegroundRole and index.column() == 4:
-            return QColor("#12846e" if row["usable"] else "#bc6635")
+            return QColor(POSITIVE if row["usable"] else WARNING)
         if role == Qt.ItemDataRole.ToolTipRole:
             return json.dumps(row, ensure_ascii=False, indent=2)
         return None
@@ -92,17 +99,21 @@ class EventModel(QAbstractTableModel):
     def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
         if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.DisplayRole:
             return self.headers[section]
+        if orientation == Qt.Orientation.Horizontal and role == Qt.ItemDataRole.TextAlignmentRole:
+            return (Qt.AlignmentFlag.AlignRight if section >= 2 else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter
         return None
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
             return None
         row = self.rows[index.row()]
+        if role == Qt.ItemDataRole.TextAlignmentRole:
+            return (Qt.AlignmentFlag.AlignRight if index.column() >= 2 else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter
         if role == Qt.ItemDataRole.DisplayRole:
             return [row["rule"], row["outcome"], f"{row['time_ns'] / 1e9:.6f}",
                     display_value(row["metric"]), str(len(row["evidence"]))][index.column()]
         if role == Qt.ItemDataRole.ForegroundRole and index.column() == 1:
-            return QColor("#12846e" if row["outcome"] in {"consistent", "response_ok"} else "#bc6635")
+            return QColor(POSITIVE if row["outcome"] in {"consistent", "response_ok"} else WARNING)
         if role == Qt.ItemDataRole.ToolTipRole:
             return json.dumps(row, ensure_ascii=False, indent=2)
         return None
@@ -155,16 +166,19 @@ class TrendPlot(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.fillRect(self.rect(), QColor("#fcfdff"))
+        painter.fillRect(self.rect(), QColor(SURFACE))
+        axis_font = painter.font()
+        axis_font.setPixelSize(12)
+        painter.setFont(axis_font)
         area = QRectF(68, 20, max(1, self.width() - 91), max(1, self.height() - 58))
-        painter.setPen(QPen(QColor("#e5ebf2"), 1))
+        painter.setPen(QPen(QColor(BORDER), 1))
         for i in range(5):
             y = area.top() + area.height() * i / 4
             painter.drawLine(QLineF(area.left(), y, area.right(), y))
         valid = [point for point in self.points if point is not None]
         if not valid:
-            painter.setPen(QColor("#8492a5"))
-            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, "选择参数后显示趋势 · 等待有效数据")
+            painter.setPen(QColor(MUTED))
+            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, "等待有效数据 · 开始采集后显示时间趋势")
             return
         x0, x1 = min(p[0] for p in valid), max(p[0] for p in valid)
         low, high = min(p[1] for p in valid), max(p[1] for p in valid)
@@ -173,7 +187,7 @@ class TrendPlot(QWidget):
         high += padding
         if self.boolean_axis:
             low, high = 0.0, 1.0
-        painter.setPen(QColor("#738197"))
+        painter.setPen(QColor(MUTED))
         for i in range(5):
             value = high - (high - low) * i / 4
             axis_label = ("true / 1" if i == 0 else "false / 0" if i == 4 else "") if self.boolean_axis else f"{value:.4g}"
@@ -181,26 +195,36 @@ class TrendPlot(QWidget):
                              Qt.AlignmentFlag.AlignRight, axis_label)
         time_origin = x0 if self.time_origin is None else self.time_origin
         begin_time, end_time = (x0 - time_origin) / 1e9, (x1 - time_origin) / 1e9
-        painter.drawText(QRectF(area.left(), area.bottom() + 10, area.width(), 20),
-                         Qt.AlignmentFlag.AlignLeft, f"{begin_time:.3f} s     →     {end_time:.3f} s    ·    {self.unit}")
+        ticks = 5 if area.width() >= 480 else 3
+        for i in range(ticks):
+            x = area.left() + area.width() * i / (ticks - 1)
+            alignment = Qt.AlignmentFlag.AlignLeft if i == 0 else Qt.AlignmentFlag.AlignRight if i == ticks - 1 else Qt.AlignmentFlag.AlignHCenter
+            painter.drawText(QRectF(x if i == 0 else x - 80 if i == ticks - 1 else x - 40,
+                                   area.bottom() + 10, 80, 20), alignment,
+                             f"{begin_time + (end_time - begin_time) * i / (ticks - 1):.3f} s")
         path = QPainterPath()
         connected = False
         markers = []
-        for point in self.points:
+        run_length = 0
+        for point in [*self.points, None]:
             if point is None:
+                if run_length == 1:
+                    markers.append(last_point)
                 connected = False
+                run_length = 0
                 continue
             x = area.left() + (point[0] - x0) / max(x1 - x0, 1) * area.width()
             y = area.bottom() - (point[1] - low) / (high - low) * area.height()
-            markers.append(QPointF(x, y))
+            last_point = QPointF(x, y)
+            run_length += 1
             if connected:
                 path.lineTo(x, y)
             else:
                 path.moveTo(x, y)
             connected = True
-        painter.setPen(QPen(QColor("#168fbd"), 2.2))
+        painter.setPen(QPen(QColor(ACCENT), 2))
         painter.drawPath(path)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#168fbd"))
+        painter.setBrush(QColor(ACCENT))
         for marker in markers:
             painter.drawEllipse(marker, 1.8, 1.8)

@@ -13,8 +13,8 @@ import unittest
 from uuid import uuid4
 
 sys.dont_write_bytecode = True
-from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QFont, QFontDatabase
+from PySide6.QtCore import QPoint, QTimer, Qt
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetricsF
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
@@ -41,7 +41,7 @@ if os.name == "nt" and app.platformName() == "offscreen":
 plugin_suffix = ".dll" if os.name == "nt" else ".so"
 qt_errors = []
 sys.excepthook = lambda typ, value, tb: qt_errors.append("".join(traceback.format_exception(typ, value, tb)))
-receipt = {"qt_version": app.instance().applicationVersion(), "checks": []}
+receipt = {"qt_version": app.instance().applicationVersion(), "checks": [], "layouts": []}
 
 
 def wait_until(predicate, timeout=10000):
@@ -91,6 +91,36 @@ class FrontendIntegration(unittest.TestCase):
             if self.window.sources.item(i, 0).text() == source:
                 return self.window.sources.item(i, 1).text()
         return None
+
+    def capture_layouts(self, stage, pages):
+        window = self.window
+        original_size, original_page = window.size(), window.pages.currentIndex()
+        for width, height in ((1440, 900), (1160, 780), (1920, 1080)):
+            window.resize(width, height)
+            for page in pages:
+                window.navigate(page)
+                QTest.qWait(30)
+                self.assertEqual((window.width(), window.height()), (width, height))
+                controls = [window.capture_button, window.end_button, window.heading]
+                if page == 3:
+                    controls += [window.relations_page.input_view, window.relations_page.create_button,
+                                 window.relations_page.relationships, window.relations_page.plot]
+                    self.assertFalse(window.relations_page.input_view.geometry().intersects(
+                        window.relations_page.bindings_text.geometry()))
+                    table = window.relations_page.relationships
+                    for row in range(table.rowCount()):
+                        self.assertGreaterEqual(table.columnWidth(0),
+                            QFontMetricsF(table.font()).horizontalAdvance(table.item(row, 0).text()) + 12)
+                for control in controls:
+                    self.assertTrue(control.isVisible())
+                    bounds = control.rect().translated(control.mapTo(window, QPoint(0, 0)))
+                    self.assertTrue(window.rect().contains(bounds), (stage, page, width, height, bounds))
+                screenshot = f"{stage}-page-{page}-{width}x{height}.png"
+                self.assertTrue(window.grab().save(str(args.output / screenshot)))
+                receipt["layouts"].append({"stage": stage, "page": page, "width": width,
+                                           "height": height, "screenshot": screenshot})
+        window.resize(original_size)
+        window.navigate(original_page)
 
     def test_01_live_roundtrip_and_offline(self):
         window = self.window
@@ -148,6 +178,7 @@ class FrontendIntegration(unittest.TestCase):
             self.assertEqual(digest(online / name), digest(window.analysis_output / name))
             hashes[name] = digest(online / name)
         self.assertTrue(window.grab().save(str(args.output / "offline.png")))
+        self.capture_layouts("offline", (1,))
         # Corruption must fail visibly, replacing the prior successful result.
         corrupt = self.data_dir / "损坏归档.avbus"
         content = bytearray(window.archive.read_bytes())
@@ -251,6 +282,11 @@ class FrontendIntegration(unittest.TestCase):
         window = self.window
         self.assertEqual(window.pages.currentIndex(), 2)
         self.assertFalse(hasattr(window, "demo_button"))
+        self.assertFalse(window.brand_mark.pixmap().isNull())
+        self.assertEqual(QFontInfo(window.parameter_view.font()).family(), "Microsoft YaHei UI")
+        metrics = QFontMetricsF(window.parameter_view.font())
+        self.assertLess(max(metrics.horizontalAdvance(c) for c in "0123456789") -
+                        min(metrics.horizontalAdvance(c) for c in "0123456789"), 0.01)
         for page_index in range(4):
             window.navigate(page_index)
             self.assertTrue(window.capture_button.isVisible())
@@ -284,6 +320,7 @@ class FrontendIntegration(unittest.TestCase):
         window.navigate(2)
         QTest.qWait(30)
         self.assertTrue(window.grab().save(str(args.output / "plugins-ready.png")))
+        self.capture_layouts("ready", (2,))
         QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.parameter_model.rowCount() == 4)
         self.assertEqual(window.pages.currentIndex(), 0)
@@ -327,6 +364,7 @@ class FrontendIntegration(unittest.TestCase):
         page.relationships.selectRow(0)
         self.assertGreater(len(page.plot.points), 0)
         self.assertTrue(window.grab().save(str(args.output / "relations.png")))
+        self.capture_layouts("active", (0, 3))
         self.assertTrue((self.data_dir / "relations.json").exists())
         # A separate plugin copy keeps collecting when the demo module is disabled.
         separate = self.data_dir / ("独立采集插件" + plugin_suffix)

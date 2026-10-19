@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QFormLayo
     QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
     QSpinBox, QVBoxLayout, QWidget)
 
+from .theme import ALERT_STYLE, RUNNING_STYLE
+
 
 class PluginCard(QFrame):
     start_requested = Signal(object)
@@ -38,13 +40,17 @@ class PluginCard(QFrame):
         summary.setWordWrap(True)
         summary.setMinimumHeight(54)
         layout.addWidget(summary)
+        functions = QLabel("\n".join("• " + item for item in definition["functions"]))
+        functions.setTextFormat(Qt.TextFormat.PlainText)
+        functions.setWordWrap(True)
+        layout.addWidget(functions)
         self.runtime = QLabel("启用插件后就绪，由顶部“开始采集”按钮开始采集。")
         self.runtime.setObjectName("muted")
         self.runtime.setWordWrap(True)
         layout.addWidget(self.runtime)
+        layout.addStretch()
         actions = QHBoxLayout()
         self.start_button = QPushButton("启用插件")
-        self.start_button.setObjectName("primary")
         self.stop_button = QPushButton("停用")
         self.details_button = QPushButton("查看详情")
         self.start_button.clicked.connect(lambda: self.start_requested.emit(definition))
@@ -143,7 +149,7 @@ class PluginCenter(QWidget):
         body.setObjectName("pluginGrid")
         self.grid = QGridLayout(body)
         self.grid.setContentsMargins(0, 10, 0, 10)
-        self.grid.setSpacing(16)
+        self.grid.setSpacing(24)
         self.grid.setRowStretch(20, 1)
         for definition in definitions:
             self.add_definition(definition)
@@ -193,8 +199,8 @@ class PluginCenter(QWidget):
             card.status.setText("文件缺失" if not exists else "故障" if faulted else
                 f"{'正在停用' if disabled else '采集中'} · {running} 个源" if running else
                 "已停用" if disabled else "已启用 · 待开始" if sources else "未启用")
-            card.status.setStyleSheet("background:#fff0e6;color:#b15c2c;" if faulted or not exists else "")
-            card.runtime.setText("；".join(f"{source['id']} · 已记录 {source['recorded']} 帧" for source in sources) or
+            card.status.setStyleSheet(ALERT_STYLE if faulted or not exists else RUNNING_STYLE if running else "")
+            card.runtime.setText(f"采集源 {len(sources)} 个 · 已记录 {sum(source['recorded'] for source in sources):,} 帧" if sources else
                 "启用插件后就绪，由顶部“开始采集”按钮开始采集。")
             available = exists and not busy and not closing and (not active or ready)
             card.start_button.setEnabled(available and (not sources or disabled))

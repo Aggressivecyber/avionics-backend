@@ -8,7 +8,8 @@ import time
 from uuid import uuid4
 
 from PySide6.QtCore import QProcess, QSortFilterProxyModel, Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPalette, QPixmap
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
@@ -21,43 +22,7 @@ from .backend import BackendClient, read_jsonl_tail, writable_data_path
 from .models import EventModel, ParameterModel, TrendPlot
 from .plugin_center import PluginCenter, ReplaySetupDialog
 from .relations_page import RelationsPage
-
-
-STYLE = """
-QWidget { font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 12px; color: #24344b; }
-QMainWindow { background: #f0f4f8; }
-QWidget#pluginGrid { background: #f0f4f8; }
-QFrame#rail { background: #12233c; border: none; }
-QFrame#rail QLabel { color: #9cb0cb; background: transparent; }
-QFrame#rail QLabel#brand { color: #ffffff; font-size: 21px; font-weight: 700; }
-QFrame#rail QPushButton { background: transparent; color: #b6c7df; border: none;
-                         border-radius: 7px; padding: 13px 12px; text-align: left; }
-QFrame#rail QPushButton:checked { background: #243d5c; color: #62d5cf; }
-QFrame#card { background: #ffffff; border: 1px solid #e0e7ef; border-radius: 10px; }
-QLabel#heading { font-size: 22px; font-weight: 700; color: #172e4b; }
-QLabel#section { font-size: 14px; font-weight: 700; color: #172e4b; }
-QLabel#muted { color: #7a8b9f; }
-QLabel#metric { font-family: 'Segoe UI'; font-size: 29px; font-weight: 600; color: #183550; }
-QLabel#badge { border-radius: 6px; padding: 7px 12px; background: #e6f5ef; color: #12846e; }
-QPushButton { background: #ffffff; border: 1px solid #d8e1eb; border-radius: 6px; padding: 7px 12px; }
-QPushButton:hover { border-color: #1894a1; color: #117e8d; background: #f2fbfb; }
-QPushButton:disabled { background: #f3f5f8; color: #a4aeba; border-color: #e3e8ef; }
-QPushButton#primary { background: #147d91; border-color: #147d91; color: white; font-weight: 600; }
-QPushButton#primary:hover { background: #0c697d; }
-QPushButton#primary:disabled { background: #a6bdc3; border-color: #a6bdc3; }
-QLineEdit, QComboBox { background: #ffffff; border: 1px solid #dbe3ec; border-radius: 5px;
-                       padding: 7px 8px; selection-background-color: #c3eaf0; }
-QTableView, QTableWidget { background: white; alternate-background-color: #f7f9fc;
-                         border: none; gridline-color: #edf1f6; selection-background-color: #e0f2f6;
-                         selection-color: #173d52; }
-QHeaderView::section { background: #f2f6fa; color: #6d8095; padding: 8px; border: none;
-                       border-bottom: 1px solid #e2e9f0; font-weight: 500; }
-QTabWidget::pane { background: white; border: none; }
-QTabBar::tab { padding: 9px 19px; color: #8090a3; border-bottom: 2px solid transparent; }
-QTabBar::tab:selected { color: #137f92; border-bottom-color: #137f92; }
-QPlainTextEdit { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 5px; padding: 8px; }
-QSplitter::handle { background: #f0f4f8; }
-"""
+from .theme import ACTIVE, ALERT_STYLE, INK, MUTED, NEGATIVE, RUNNING_STYLE, STYLE
 
 
 def label(text, name=None):
@@ -80,20 +45,20 @@ def card():
     widget = QFrame()
     widget.setObjectName("card")
     layout = QVBoxLayout(widget)
-    layout.setContentsMargins(16, 14, 16, 14)
-    layout.setSpacing(10)
+    layout.setContentsMargins(20, 16, 20, 16)
+    layout.setSpacing(12)
     return widget, layout
 
 
 def table_view(model):
     view = QTableView()
     view.setModel(model)
-    view.setAlternatingRowColors(True)
+    view.setShowGrid(False)
     view.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     view.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
     view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     view.verticalHeader().hide()
-    view.verticalHeader().setDefaultSectionSize(31)
+    view.verticalHeader().setDefaultSectionSize(36)
     view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     return view
 
@@ -193,6 +158,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("AEROBUS v0.4.2 · 插件与数据关联工作台")
         self.resize(1440, 920)
         self.setMinimumSize(1160, 780)
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.PlaceholderText, QColor(MUTED))
+        palette.setColor(QPalette.ColorRole.Highlight, QColor(ACTIVE))
+        palette.setColor(QPalette.ColorRole.HighlightedText, QColor(INK))
+        self.setPalette(palette)
         self.setStyleSheet(STYLE)
         self.build_ui(configuration)
         self.freshness = QTimer(self)
@@ -202,18 +172,33 @@ class MainWindow(QMainWindow):
         self.on_active(False)
 
     def build_ui(self, configuration):
+        # At 1440 px: 228 sidebar + 8 outer inset + 1204 sheet; sheet gutters are 24 px each.
         root = QWidget()
+        root.setObjectName("frame")
         layout = QHBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         rail = QFrame()
         rail.setObjectName("rail")
-        rail.setFixedWidth(174)
+        rail.setFixedWidth(228)
         navigation = QVBoxLayout(rail)
-        navigation.setContentsMargins(18, 29, 18, 24)
-        navigation.addWidget(label("AEROBUS", "brand"))
-        navigation.addWidget(label("GROUND STATION"))
-        navigation.addSpacing(37)
+        navigation.setContentsMargins(20, 20, 16, 24)
+        navigation.setSpacing(8)
+        identity = QHBoxLayout()
+        self.brand_mark = QLabel()
+        mark = QPixmap(28, 28)
+        mark.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(mark)
+        QSvgRenderer(str(Path(__file__).with_name("assets") / "aerobus.svg")).render(painter)
+        painter.end()
+        self.brand_mark.setPixmap(mark)
+        self.brand_mark.setFixedSize(28, 28)
+        identity.addWidget(self.brand_mark)
+        identity.addWidget(label("AEROBUS", "brand"))
+        identity.addStretch()
+        navigation.addLayout(identity)
+        navigation.addWidget(label("地面总线试验", "muted"))
+        navigation.addSpacing(28)
         self.monitor_nav = button("监测工作台", lambda: self.navigate(0))
         self.offline_nav = button("离线分析", lambda: self.navigate(1))
         self.plugins_nav = button("插件中心", lambda: self.navigate(2))
@@ -222,47 +207,71 @@ class MainWindow(QMainWindow):
             nav.setCheckable(True)
             navigation.addWidget(nav)
         navigation.addStretch()
-        navigation.addWidget(label("地面试验 / 数据分析"))
-        navigation.addWidget(label("设备与总线由插件接入"))
+        navigation.addWidget(label("原始归档 · 参数分析", "muted"))
+        navigation.addWidget(label("v0.4.2", "muted"))
         layout.addWidget(rail)
         body = QWidget()
+        body.setObjectName("frame")
         body_layout = QVBoxLayout(body)
-        body_layout.setContentsMargins(24, 22, 24, 18)
-        body_layout.setSpacing(14)
-        top = QHBoxLayout()
-        titles = QVBoxLayout()
-        self.heading = label("插件中心", "heading")
-        titles.addWidget(self.heading)
-        titles.addWidget(label("采集管理、参数监测与关联分析", "muted"))
-        top.addLayout(titles)
-        top.addStretch()
-        self.badge = label("会话未开始", "badge")
-        top.addWidget(self.badge)
-        body_layout.addLayout(top)
-        session_card, session = card()
-        session_row = QHBoxLayout()
+        body_layout.setContentsMargins(0, 0, 8, 8)
+        body_layout.setSpacing(0)
+        toolbar = QFrame()
+        toolbar.setFixedHeight(56)
+        actions = QHBoxLayout(toolbar)
+        actions.setContentsMargins(24, 8, 0, 8)
+        actions.setSpacing(12)
+        actions.addWidget(label("试验", "muted"))
         self.session_name = QLineEdit("地面试验")
-        self.session_name.setMaximumWidth(140)
-        self.config_path = QLineEdit(str(configuration))
-        self.config_path.setReadOnly(True)
-        self.config_button = button("字典 / 规则", self.browse_configuration)
+        self.session_name.setFixedWidth(168)
+        self.session_name.setToolTip("试验名称用于本次会话的归档文件名。")
+        actions.addWidget(self.session_name)
+        actions.addStretch()
+        self.badge = label("会话未开始", "badge")
+        self.badge.setMaximumWidth(240)
+        self.badge.setWordWrap(True)
+        actions.addWidget(self.badge)
         self.new_button = button("新建会话", self.new_session)
         self.capture_button = button("开始采集", self.start_capture, True)
         self.end_button = button("结束并封存", self.end_session)
-        session_row.addWidget(self.session_name)
+        for action in (self.new_button, self.capture_button, self.end_button):
+            actions.addWidget(action)
+        body_layout.addWidget(toolbar)
+        sheet = QFrame()
+        sheet.setObjectName("sheet")
+        sheet_layout = QVBoxLayout(sheet)
+        sheet_layout.setContentsMargins(24, 24, 24, 20)
+        sheet_layout.setSpacing(24)
+        title_row = QHBoxLayout()
+        self.heading = label("插件中心", "heading")
+        title_row.addWidget(self.heading)
+        title_row.addStretch()
+        self.config_toggle = QPushButton("试验配置")
+        self.config_toggle.setCheckable(True)
+        self.config_toggle.setChecked(True)
+        self.config_toggle.setToolTip("查看字典、规则与数据目录。")
+        title_row.addWidget(self.config_toggle)
+        sheet_layout.addLayout(title_row)
+        self.config_panel, session = card()
+        self.config_toggle.toggled.connect(self.config_panel.setVisible)
+        session_row = QHBoxLayout()
+        self.config_path = QLineEdit(str(configuration))
+        self.config_path.setReadOnly(True)
+        self.config_path.setToolTip(str(configuration))
+        self.config_button = button("字典 / 规则", self.browse_configuration)
         session_row.addWidget(self.config_path, 1)
-        for widget in (self.config_button, self.new_button, self.capture_button, self.end_button):
-            session_row.addWidget(widget)
+        session_row.addWidget(self.config_button)
         session.addLayout(session_row)
         path_row = QHBoxLayout()
-        self.storage_label = label("数据目录：" + str(self.data_dir), "muted")
-        self.storage_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        path_row.addWidget(label("数据目录", "muted"))
+        self.storage_label = QLineEdit(str(self.data_dir))
+        self.storage_label.setReadOnly(True)
+        self.storage_label.setToolTip(str(self.data_dir))
         path_row.addWidget(self.storage_label, 1)
         self.storage_button = button("选择目录", self.browse_storage)
         path_row.addWidget(self.storage_button)
         path_row.addWidget(button("打开目录", self.open_data_directory))
         session.addLayout(path_row)
-        body_layout.addWidget(session_card)
+        sheet_layout.addWidget(self.config_panel)
         self.pages = QStackedWidget()
         self.pages.addWidget(self.build_monitor())
         self.pages.addWidget(self.build_offline(configuration))
@@ -272,10 +281,11 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.plugin_center)
         self.relations_page = RelationsPage(self.event_model, self.data_dir / "relations.json")
         self.pages.addWidget(self.relations_page)
-        body_layout.addWidget(self.pages, 1)
+        sheet_layout.addWidget(self.pages, 1)
         self.message = label("就绪 · 先启用插件，再点击顶部“开始采集”。", "muted")
         self.message.setWordWrap(True)
-        body_layout.addWidget(self.message)
+        sheet_layout.addWidget(self.message)
+        body_layout.addWidget(sheet, 1)
         layout.addWidget(body, 1)
         self.setCentralWidget(root)
         self.navigate(2)
@@ -284,28 +294,34 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(14)
-        metrics = QHBoxLayout()
+        layout.setSpacing(24)
+        metrics_panel = QFrame()
+        metrics_panel.setObjectName("tray")
+        metrics = QHBoxLayout(metrics_panel)
+        metrics.setContentsMargins(20, 12, 20, 12)
+        metrics.setSpacing(24)
         self.metric_values = []
         self.metric_notes = []
         for title, note in [("已记录帧", "原始记录"), ("参数样本", "在线解析"),
                             ("关联事件", "规则输出"), ("采集拒绝", "累计拒绝帧")]:
-            panel, content = card()
+            content = QVBoxLayout()
+            content.setSpacing(4)
             content.addWidget(label(title, "muted"))
-            value = label("0", "metric")
+            value = label("0", "metricLead" if not self.metric_values else "metric")
             sub = label(note, "muted")
             content.addWidget(value)
             content.addWidget(sub)
             self.metric_values.append(value)
             self.metric_notes.append(sub)
-            metrics.addWidget(panel)
-        layout.addLayout(metrics)
+            metrics.addLayout(content, 1)
+        layout.addWidget(metrics_panel)
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setHandleWidth(24)
         left, content = card()
         heading = QHBoxLayout()
         heading.addWidget(label("采集源", "section"))
         heading.addStretch()
-        self.add_button = button("＋ 添加", self.add_source)
+        self.add_button = button("添加源", self.add_source)
         heading.addWidget(self.add_button)
         content.addLayout(heading)
         self.sources = QTableWidget(0, 3)
@@ -314,13 +330,17 @@ class MainWindow(QMainWindow):
         self.sources.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.sources.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.sources.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.sources.setAlternatingRowColors(True)
-        self.sources.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.sources.setShowGrid(False)
+        self.sources.verticalHeader().setDefaultSectionSize(36)
+        self.sources.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.sources.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        self.sources.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
+        self.sources.horizontalHeaderItem(2).setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.sources.itemSelectionChanged.connect(self.update_source_actions)
         self.sources.setMinimumWidth(260)
         content.addWidget(self.sources, 1)
         actions = QGridLayout()
-        self.start_button = button("启动源", lambda: self.source_action("start"), True)
+        self.start_button = button("启动源", lambda: self.source_action("start"))
         self.stop_button = button("停止源", lambda: self.source_action("stop"))
         self.replace_button = button("替换插件", self.replace_source)
         self.remove_button = button("移除源", lambda: self.source_action("remove"))
@@ -334,6 +354,7 @@ class MainWindow(QMainWindow):
         content.addWidget(self.source_note)
         splitter.addWidget(left)
         right = QSplitter(Qt.Orientation.Vertical)
+        right.setHandleWidth(24)
         trend_card, trend = card()
         trend_title = QHBoxLayout()
         trend_title.addWidget(label("参数趋势", "section"))
@@ -374,7 +395,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self.log, "操作日志")
         tabs_content.addWidget(tabs)
         right.addWidget(tabs_card)
-        right.setSizes([280, 310])
+        right.setSizes([240, 330])
         splitter.addWidget(right)
         splitter.setSizes([300, 900])
         splitter.setStretchFactor(1, 1)
@@ -385,6 +406,7 @@ class MainWindow(QMainWindow):
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(24)
         inputs, content = card()
         content.addWidget(label("离线归档分析", "section"))
         form = QFormLayout()
@@ -402,7 +424,7 @@ class MainWindow(QMainWindow):
         content.addLayout(form)
         actions = QHBoxLayout()
         self.inspect_button = button("校验归档完整性", lambda: self.start_offline("inspect"))
-        self.analyze_button = button("执行离线分析", lambda: self.start_offline("analyze"), True)
+        self.analyze_button = button("执行离线分析", lambda: self.start_offline("analyze"))
         actions.addWidget(self.inspect_button)
         actions.addWidget(self.analyze_button)
         actions.addStretch()
@@ -443,6 +465,7 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getOpenFileName(self, "选择字典与规则", self.config_path.text(), "配置 (*.ini)")
         if path:
             self.config_path.setText(path)
+            self.config_path.setToolTip(path)
 
     def browse_storage(self):
         path = QFileDialog.getExistingDirectory(self, "选择 D / E 盘数据目录", str(self.data_dir))
@@ -450,7 +473,8 @@ class MainWindow(QMainWindow):
             try:
                 self.data_dir = writable_data_path(path)
                 self.relations_page.definitions_path = self.data_dir / "relations.json"
-                self.storage_label.setText("数据目录：" + str(self.data_dir))
+                self.storage_label.setText(str(self.data_dir))
+                self.storage_label.setToolTip(str(self.data_dir))
             except ValueError as error:
                 self.on_error(str(error))
 
@@ -489,7 +513,8 @@ class MainWindow(QMainWindow):
             self.badge.setStyleSheet("")
             self.client.start(self.archive, configuration)
             self.badge.setText("正在创建会话…")
-            self.message.setText("正在创建：" + str(self.archive))
+            self.message.setText("正在创建：" + self.archive.name)
+            self.message.setToolTip(str(self.archive))
             self.navigate(0)
         except (OSError, ValueError) as error:
             self.demo_pending = False
@@ -499,6 +524,7 @@ class MainWindow(QMainWindow):
 
     def start_demo(self):
         self.config_path.setText(str(self.demo_configuration))
+        self.config_path.setToolTip(str(self.demo_configuration))
         self.demo_pending = True
         self.new_session()
 
@@ -595,7 +621,7 @@ class MainWindow(QMainWindow):
     def on_ready(self, message):
         self.log_message("会话已创建：" + message["archive"])
         self.log_message(f"后端版本 {message['build']['version']} · {message['build']['revision']}")
-        self.message.setText("会话已就绪；请点击“开始采集”。归档：" + message["archive"])
+        self.message.setText("会话已就绪；请点击“开始采集”。归档：" + self.archive.name)
         if self.demo_pending:
             self.demo_pending = False
             self.queue_demo_sources()
@@ -658,6 +684,9 @@ class MainWindow(QMainWindow):
             rate = (snapshot["recorded"] - self.last_counts[1]) / (now - self.last_counts[0])
         self.last_counts = now, snapshot["recorded"]
         self.last_snapshot_time = now
+        if self.message.text() == "正在开始采集…" and any(
+                source["status"]["state"] == "running" for source in snapshot["sources"]):
+            self.message.setText("采集中 · 原始归档：" + self.archive.name)
         for value, count in zip(self.metric_values,
                                 [snapshot["recorded"], snapshot["samples"], snapshot["results"], snapshot["dropped"]]):
             value.setText(f"{count:,}")
@@ -676,7 +705,9 @@ class MainWindow(QMainWindow):
                 item = QTableWidgetItem(value)
                 item.setToolTip(json.dumps(source, ensure_ascii=False, indent=2))
                 if col == 1:
-                    item.setForeground(Qt.GlobalColor.darkRed if status["state"] == "faulted" else Qt.GlobalColor.darkCyan)
+                    item.setForeground(QColor(NEGATIVE if status["state"] == "faulted" else INK))
+                elif col == 2:
+                    item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
                 self.sources.setItem(row, col, item)
             if source["id"] == selected:
                 self.sources.selectRow(row)
@@ -698,7 +729,8 @@ class MainWindow(QMainWindow):
         self.display_note.setText(f"趋势最近 512 点 · 界面跳过 {self.display_omitted:,} 样本 / {self.display_events_omitted:,} 事件 · 完整结果写入文件")
         self.display_note.setToolTip(f"参数表最多 4096 项；超过表容量的更新：{self.parameter_model.omitted:,}。事件表保留最近 200 条。")
         if not snapshot["healthy"]:
-            self.badge.setText("记录故障 · " + snapshot["failure"])
+            self.badge.setText("原始记录故障 · 查看日志")
+            self.message.setText(snapshot["failure"])
         elif not snapshot["analysis_healthy"]:
             self.badge.setText("分析不完整 · 原始记录仍在采集")
             self.message.setText(snapshot["analysis_failure"])
@@ -709,7 +741,8 @@ class MainWindow(QMainWindow):
             self.badge.setText(f"{'合成演示' if self.session_is_demo else '正在记录'} · {running} 个源运行中" if running else
                               f"{'合成演示' if self.session_is_demo else '会话已就绪'} · 等待开始采集")
         degraded = not snapshot["healthy"] or not snapshot["analysis_healthy"] or snapshot["capture_degraded"]
-        self.badge.setStyleSheet("background:#fff0e6;color:#b15c2c;" if degraded else "")
+        self.badge.setStyleSheet(ALERT_STYLE if degraded else RUNNING_STYLE if any(
+            source["status"]["state"] == "running" for source in snapshot["sources"]) else "")
         self.refresh_plugins()
 
     def select_trend(self, index):
@@ -720,7 +753,7 @@ class MainWindow(QMainWindow):
         healthy = metadata["recording_healthy"]
         complete = healthy and metadata["capture_status"] == "complete" and metadata["analysis_status"] == "complete"
         self.badge.setText("已封存 · 采集与分析完整" if complete else "会话结束 · 请检查降级 / 故障回执")
-        self.badge.setStyleSheet("" if complete else "background:#fff0e6;color:#b15c2c;")
+        self.badge.setStyleSheet("" if complete else ALERT_STYLE)
         self.metric_values[0].setText(f"{metadata['recorded']:,}")
         self.metric_values[1].setText(f"{metadata['samples']:,}")
         self.metric_values[2].setText(f"{metadata['results']:,}")
@@ -756,6 +789,7 @@ class MainWindow(QMainWindow):
             self.plugin_action_pending = False
         for widget in (self.new_button, self.config_button, self.storage_button, self.session_name):
             widget.setEnabled(not active)
+        self.config_toggle.setChecked(not active)
         self.end_button.setEnabled(active and not self.client.closing)
         self.update_source_actions()
         self.refresh_plugins()
@@ -786,7 +820,7 @@ class MainWindow(QMainWindow):
             age = time.monotonic() - self.last_snapshot_time
             if age > 2:
                 self.badge.setText(f"等待后端响应 · {age:.0f} s 未刷新")
-                self.badge.setStyleSheet("background:#fff0e6;color:#b15c2c;")
+                self.badge.setStyleSheet(ALERT_STYLE)
 
     def log_message(self, text):
         self.log.appendPlainText(f"{datetime.now():%H:%M:%S}  {text}")
@@ -796,7 +830,7 @@ class MainWindow(QMainWindow):
         self.log_message("错误 · " + text)
         if not self.client.active:
             self.badge.setText("操作失败 · 查看日志")
-        self.badge.setStyleSheet("background:#fff0e6;color:#b15c2c;")
+        self.badge.setStyleSheet(ALERT_STYLE)
 
     def on_exit(self, code):
         if self.close_pending:
