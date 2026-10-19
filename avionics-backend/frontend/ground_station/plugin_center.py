@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QFormLayo
     QSpinBox, QVBoxLayout, QWidget)
 
 from .theme import ALERT_STYLE, RUNNING_STYLE
+from .ui_assets import artwork, icon
 
 
 class PluginCard(QFrame):
@@ -34,7 +35,13 @@ class PluginCard(QFrame):
         name = QLabel(definition["name"])
         name.setTextFormat(Qt.TextFormat.PlainText)
         name.setObjectName("section")
-        layout.addWidget(name)
+        title = QHBoxLayout()
+        self.artwork = QLabel()
+        self.artwork.setPixmap(icon(definition["artwork"]).pixmap(48, 48))
+        self.artwork.setFixedSize(48, 48)
+        title.addWidget(self.artwork)
+        title.addWidget(name, 1)
+        layout.addLayout(title)
         summary = QLabel(definition["summary"])
         summary.setTextFormat(Qt.TextFormat.PlainText)
         summary.setWordWrap(True)
@@ -53,6 +60,9 @@ class PluginCard(QFrame):
         self.start_button = QPushButton("启用插件")
         self.stop_button = QPushButton("停用")
         self.details_button = QPushButton("查看详情")
+        self.start_button.setIcon(icon("plugin_enable"))
+        self.stop_button.setIcon(icon("plugin_disable"))
+        self.details_button.setIcon(icon("evidence"))
         self.start_button.clicked.connect(lambda: self.start_requested.emit(definition))
         self.stop_button.clicked.connect(lambda: self.stop_requested.emit(definition))
         self.details_button.clicked.connect(lambda: self.details_requested.emit(definition))
@@ -70,7 +80,12 @@ class PluginDetailsDialog(QDialog):
         title = QLabel(definition["name"])
         title.setObjectName("heading")
         title.setTextFormat(Qt.TextFormat.PlainText)
-        layout.addWidget(title)
+        heading = QHBoxLayout()
+        artwork = QLabel()
+        artwork.setPixmap(icon(definition["artwork"]).pixmap(64, 64))
+        heading.addWidget(artwork)
+        heading.addWidget(title, 1)
+        layout.addLayout(heading)
         self.text = QPlainTextEdit()
         self.text.setReadOnly(True)
         self.text.setPlainText(definition["description"] + "\n\n功能\n" +
@@ -89,12 +104,21 @@ class ReplaySetupDialog(QDialog):
         self.setWindowTitle("启用归档回放插件")
         self.resize(650, 230)
         form = QFormLayout(self)
+        guide = QLabel()
+        guide.setPixmap(artwork("archive_workflow").scaled(420, 90,
+            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        guide.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        form.addRow(guide)
+        caption = QLabel("选择原始归档 → 准备回放源 → 点击顶部“开始采集”")
+        caption.setObjectName("muted")
+        form.addRow(caption)
         self.source = QLineEdit("replay")
         self.archive = QLineEdit()
         self.data_dir = data_dir
         path = QHBoxLayout()
         path.addWidget(self.archive)
         browse = QPushButton("选择归档")
+        browse.setIcon(icon("browse"))
         browse.clicked.connect(self.browse)
         path.addWidget(browse)
         self.speed = QSpinBox()
@@ -141,7 +165,13 @@ class PluginCenter(QWidget):
         note = QLabel("先启用插件，再点击顶部“开始采集”；停用仅停止该插件的来源。点击详情查看功能、配置参数和当前状态。")
         note.setWordWrap(True)
         note.setObjectName("muted")
-        layout.addWidget(note)
+        introduction = QHBoxLayout()
+        introduction.addWidget(note, 1)
+        scene = QLabel()
+        scene.setPixmap(artwork("plugin_scene").scaled(180, 72,
+            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        introduction.addWidget(scene)
+        layout.addLayout(introduction)
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -181,7 +211,7 @@ class PluginCenter(QWidget):
                     "description": "已由当前会话加载的自定义采集插件。功能需要由插件作者登记，界面不会从文件名推断用途。",
                     "functions": ["当前用于逻辑源：" + source], "parameters": config,
                     "notes": "在 plugins.json 中登记插件名称、功能和参数后，可显示完整说明。",
-                    "mode": "custom", "presets": []}
+                    "mode": "custom", "artwork": "plugins", "presets": []}
                 self.add_definition(definition)
                 paths[normalized] = definition
         self.sources_by_plugin = {key: [] for key in self.cards}

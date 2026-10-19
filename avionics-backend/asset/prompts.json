@@ -1,0 +1,490 @@
+{
+  "schema": 1,
+  "tool": "built-in image_gen",
+  "minimum_requested": 20,
+  "planned_count": 30,
+  "icon_prompt_prefix": "Use case: productivity-visual. Asset type: ONE production Qt desktop pictogram for AEROBUS, a professional ground-test and avionics bus monitoring workbench. Create a single flat 2D geometric monoline symbol, centered, occupying about 78% of a square canvas, generously separated from all edges. Broad clean charcoal #263238 strokes that stay legible at 24px; one restrained petrol teal #1b6c80 detail, white negative space INSIDE the objects only. Actual transparent alpha background. Consistent rounded stroke joins, precise engineering drafting character, minimal shapes. No text, letters, numbers, captions, gradients, shadows, glow, panels, tiles, borders, fake screenshots, photographic textures, 3D perspective, or decorative dots. Produce one symbol only, not a grid. Subject: ",
+  "assets": [
+    {
+      "id": "plugins",
+      "kind": "icon",
+      "usage": "插件中心导航",
+      "file": "icons/plugins.png",
+      "prompt_suffix": "three modular plug-in blocks joined by a short bus connector.",
+      "transparent_background": true,
+      "source_file": "generated/exec-e4fbca8f-33ad-45c2-90bd-b6e8aecd0ed9.png",
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "6e57109e7356aa1c75469ab3f6398a69534a2983570cd1ab17e1f6b70a6d431d"
+    },
+    {
+      "id": "monitor",
+      "kind": "icon",
+      "usage": "总线监测导航",
+      "file": "icons/monitor.png",
+      "prompt_suffix": "a compact oscilloscope screen with one clean waveform and two connector sockets.",
+      "transparent_background": true,
+      "source_file": "generated/exec-1c56c866-b58b-4ee8-b456-468771a73e37.png",
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "5b1e9eddbedb15743f1ac7f5501be6490a4eb9454e1c1fad5d35ce7147ff6a1d"
+    },
+    {
+      "id": "relations",
+      "kind": "icon",
+      "usage": "数据关联导航",
+      "file": "icons/relations.png",
+      "prompt_suffix": "three input nodes joining a small formula block and one output node.",
+      "transparent_background": true,
+      "source_file": "generated/exec-2a811e68-1ad6-4e0e-85eb-0f38d5cbf268.png",
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "5145c950e6c5d187ccbf7ff4acac12865603dbb98901adbc41ed8f6eb0fe30ec"
+    },
+    {
+      "id": "archive",
+      "kind": "icon",
+      "usage": "离线分析导航",
+      "file": "icons/archive.png",
+      "prompt_suffix": "an archive storage box with a neatly inset waveform document.",
+      "transparent_background": true,
+      "source_file": "generated/exec-729ba581-6188-498e-ad86-7516cb28ddb6.png",
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "f81c4f862ffdb7778879884d9b675e3d4d8ecde8886cfc637051353b1f9365fd"
+    },
+    {
+      "id": "demo",
+      "kind": "icon",
+      "usage": "合成演示插件",
+      "file": "icons/demo.png",
+      "prompt_suffix": "a compact signal-generator module with one waveform screen and one cable socket.",
+      "transparent_background": true,
+      "source_file": "generated/exec-08749eeb-4fd2-4f05-ae0a-08b5735f94fd.png",
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "50415f82da5a06b7ed17697aa0e23e2385e846eb2a5f79acfa24b6902fb11cd4"
+    },
+    {
+      "id": "mil1553b",
+      "kind": "icon",
+      "usage": "1553B软件插件",
+      "file": "icons/mil1553b.png",
+      "prompt_suffix": "two parallel bus rails A and B implied by paired lines, a bus controller node and two terminal nodes; absolutely no letters or text.",
+      "transparent_background": true,
+      "source_file": "generated/exec-67afa0f7-8723-4e42-8965-5b6d01b7d8e9.png",
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "f014ac4e6a4513dbbb6d8165fb9324bdcf4733cdbf511f3e190201f5b9a5a331"
+    },
+    {
+      "id": "replay",
+      "kind": "icon",
+      "usage": "归档回放插件",
+      "file": "icons/replay.png",
+      "prompt_suffix": "a waveform document with a circular replay arrow.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "cedb965b9217302df3154ffa6d89c6d7236f6362efd0c75645849436a973c72a",
+      "source_file": "generated/exec-88338198-714d-45d4-a148-bdb8e2fdb938.png"
+    },
+    {
+      "id": "new_session",
+      "kind": "icon",
+      "usage": "新建会话",
+      "file": "icons/new_session.png",
+      "prompt_suffix": "a clean test-record document with one small plus mark.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "eb3fee8daf879a7099ef61ca6f456ec5799613548982c2b75a6cbf1c3c45a043",
+      "source_file": "generated/exec-69a04cde-7777-4137-be7b-206770aae3b9.png"
+    },
+    {
+      "id": "capture_start",
+      "kind": "icon",
+      "usage": "开始采集",
+      "file": "icons/capture_start.png",
+      "prompt_suffix": "a right-pointing play triangle entering a short sampled-data waveform.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "7af994e9c0982ecf1c535c3fc92aa543531b180f3c530813980ffe502ee4485b",
+      "source_file": "generated/exec-fc4361d8-6fb3-4324-b0ce-233cbc5ea697.png"
+    },
+    {
+      "id": "capture_stop",
+      "kind": "icon",
+      "usage": "结束并封存",
+      "file": "icons/capture_stop.png",
+      "prompt_suffix": "a small stop square above a closed archive box with a checkmark.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "a9d3f7c04c2cc464df57493c3619ac2882cc4f0132836e45dbf9477f07511989",
+      "source_file": "generated/exec-8fb155e8-5897-4e78-940e-242d0484d2d0.png"
+    },
+    {
+      "id": "settings",
+      "kind": "icon",
+      "usage": "试验配置",
+      "file": "icons/settings.png",
+      "prompt_suffix": "three precise horizontal adjustment sliders at different positions.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "243812b78e92fd3f531b280ba58c134a7a920f09cab1fc5705e1d2efa19181d8",
+      "source_file": "generated/exec-9250f4f8-f485-407f-aa27-e118cf78d826.png"
+    },
+    {
+      "id": "folder",
+      "kind": "icon",
+      "usage": "打开数据目录",
+      "file": "icons/folder.png",
+      "prompt_suffix": "a simple open folder holding one short waveform document.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "93266cbd471c9c12df3865eb00894a87bcf2ff9b816ac7e156d0b25273183269",
+      "source_file": "generated/exec-0bc27306-c0a6-49c8-9bff-d8cf39b1b484.png"
+    },
+    {
+      "id": "inspect",
+      "kind": "icon",
+      "usage": "校验归档",
+      "file": "icons/inspect.png",
+      "prompt_suffix": "a magnifying glass over a record document with one small checkmark.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "acd57fda0e9aa940a2719ef833ab6ba0df5d3cb068a635a372ef7ef480226647",
+      "source_file": "generated/exec-0d01ebce-a048-45b4-b335-a3b2135b1d77.png"
+    },
+    {
+      "id": "browse",
+      "kind": "icon",
+      "usage": "选择归档和字典",
+      "file": "icons/browse.png",
+      "prompt_suffix": "two offset plain documents with a small open-folder corner.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "f27c27ffdc28d3489b5d68db99b59bb8e4f6651754e3d47a3daa557e8dbc56f8",
+      "source_file": "generated/exec-ed7011e9-754e-4d9e-be65-53e483ef1dc7.png"
+    },
+    {
+      "id": "analyze",
+      "kind": "icon",
+      "usage": "离线重算",
+      "file": "icons/analyze.png",
+      "prompt_suffix": "a waveform document passing through one small analytical gear.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "b1f8859c3d8a3bf2fba66c99388a8c97393abeb81c4af18abe8b8daf51df7f51",
+      "source_file": "generated/exec-4ff4907d-f45a-4064-8d6a-3e36658ecb7b.png"
+    },
+    {
+      "id": "add_source",
+      "kind": "icon",
+      "usage": "添加采集源",
+      "file": "icons/add_source.png",
+      "prompt_suffix": "a small connector socket with one clear plus mark.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "32e84f0a6319bc456e9b1eef1affce57f09bef67c9ecf8452f6bfde998d6359b",
+      "source_file": "generated/exec-8ea39f85-b9aa-436b-b105-27e87f4ac9df.png"
+    },
+    {
+      "id": "replace_source",
+      "kind": "icon",
+      "usage": "替换采集插件",
+      "file": "icons/replace_source.png",
+      "prompt_suffix": "two small modular connector blocks with opposing exchange arrows.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "7f90c9a40756725ac695e9265a9bde1990b9b88e3feb897444849b164e7df212",
+      "source_file": "generated/exec-c9aa59d3-f18e-4fb6-891f-5521093f3b6e.png"
+    },
+    {
+      "id": "create_relation",
+      "kind": "icon",
+      "usage": "创建命名关系",
+      "file": "icons/create_relation.png",
+      "prompt_suffix": "two input nodes joined to a newly created output node with one small plus mark.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "eb4a480cd9004881c58c86cd9bbcfb6584256fed40ca86924884f9f22d3d3bcb",
+      "source_file": "generated/exec-a788243b-b35a-42c5-85da-fc3a5a7bacac.png"
+    },
+    {
+      "id": "delete_relation",
+      "kind": "icon",
+      "usage": "删除所选关系",
+      "file": "icons/delete_relation.png",
+      "prompt_suffix": "a plain wastebasket beside a tiny disconnected-node pair.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "34b924f1fdc7549274f2d4fc83c79d0cfdf3248727c5a6da56dbb7115e9c78e4",
+      "source_file": "generated/exec-da62f2a8-58f8-495b-ad76-7d8703d681a2.png"
+    },
+    {
+      "id": "evidence",
+      "kind": "icon",
+      "usage": "查看详情及证据溯源",
+      "file": "icons/evidence.png",
+      "prompt_suffix": "a simple record document with a magnifying lens and one linked origin node.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "29888807070ef77cf6b5f43176d22a86c547acb7f39d4002613497b3e00f832b",
+      "source_file": "generated/exec-cd123e1c-3bc6-4307-9dfa-8788492b77c3.png"
+    },
+    {
+      "id": "plugin_enable",
+      "kind": "icon",
+      "usage": "启用插件",
+      "file": "icons/plugin_enable.png",
+      "prompt_suffix": "a modular bus connector block with a clear small power-on symbol; convey preparing the plugin, not starting acquisition.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "2c5f17b5c6649d91d9ecbe0fb96bdcb2f6e2023ea56764f86bf89d1082f3d68f",
+      "source_file": "generated/exec-5c06a9d2-fe43-447b-a337-c5cbca7a6600.png"
+    },
+    {
+      "id": "plugin_disable",
+      "kind": "icon",
+      "usage": "停用插件",
+      "file": "icons/plugin_disable.png",
+      "prompt_suffix": "a modular bus connector block with a clear small pause symbol of two vertical bars.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "2c7abfada1ec46e8a253a9881dec670cabe25c1560fa476174a95eb349750ef7",
+      "source_file": "generated/exec-52bb97fb-b9f6-4c6b-89f8-d3a0f2fe1898.png"
+    },
+    {
+      "id": "time_alignment",
+      "kind": "icon",
+      "usage": "参数时间对齐",
+      "file": "icons/time_alignment.png",
+      "prompt_suffix": "two short input timelines with sample dots converging at one small clock; no letters, numerals, or clock numbers.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "5d8e8643e944bdb861d6d01b7d4b4af0f746ca7e3eb6cc5b20d3b57df61e91c3",
+      "source_file": "generated/exec-2b3db25f-b4de-4355-9bbb-5b6fdadbe3cd.png"
+    },
+    {
+      "id": "raw_packet",
+      "kind": "icon",
+      "usage": "原始报文证据",
+      "file": "icons/raw_packet.png",
+      "prompt_suffix": "three stacked packet record strips linked to one small magnifying glass.",
+      "transparent_background": true,
+      "state": "ready",
+      "size": [
+        1254,
+        1254
+      ],
+      "mode": "RGBA",
+      "sha256": "f098744888ea1b1a1372ca420da96ed823a2b536ad412d1fcf2dca86e3762f39",
+      "source_file": "generated/exec-e2bcd7a6-e9aa-4a10-a6b3-db4d54e7e864.png"
+    },
+    {
+      "id": "workspace_background",
+      "kind": "background",
+      "usage": "工作台背景",
+      "file": "background/workspace_background.png",
+      "prompt": "A very quiet professional flat 2D desktop wallpaper for AEROBUS ground-test bus software. Wide landscape composition, solid pale neutral #f9fbfc background with sparse very faint fine parallel bus traces and a few connector-node outlines at the far upper right and lower left corners, colors limited to #e8eef1 and #edf3f5. Center and most of the canvas empty. No gradients, no shadows, no text, no logos, no axes, no data charts, no numbers, no photographs, no 3D, no vignette. The wallpaper sits behind readable black interface labels; extremely low contrast motifs, no large dark areas. Output a single wide background image, not a screenshot.",
+      "transparent_background": false,
+      "source_file": "generated/exec-bccbc6e0-5cd6-4458-a3cf-241cea3d869d.png",
+      "state": "ready",
+      "size": [
+        1672,
+        941
+      ],
+      "mode": "RGB",
+      "sha256": "1d1ef02790394e59b63122543b36eabc5affacf2ae46a99a57286fdc195ce2e1"
+    },
+    {
+      "id": "plugin_scene",
+      "kind": "illustration",
+      "usage": "插件页场景插画",
+      "file": "illustrations/plugin_scene.png",
+      "prompt": "Use case: productivity-visual. A compact flat 2D editorial engineering illustration for a ground-test bus software plugin center. Three clean bench modules of different widths, a small waveform display, and two orderly connector cables suggesting modular software inputs. Charcoal #263238 outlines with restrained petrol teal #1b6c80 details, white interior negative space, actual transparent alpha background. Wide horizontal balanced composition with no surrounding frame. Rounded precise geometric contours, consistent with professional technical pictograms, clean at 200px wide. No text, labels, brand names, numerals, gradients, shadows, glow, 3D or photorealism. No claimed real device model.",
+      "transparent_background": true,
+      "source_file": "generated/exec-5519f48c-db7a-4700-baa6-cb1b3e0438e6.png",
+      "state": "ready",
+      "size": [
+        1753,
+        897
+      ],
+      "mode": "RGBA",
+      "sha256": "f20613a76c27881f9ad7b979bd36d79e727ec771e2e6a315bd0fec8f02d58519"
+    },
+    {
+      "id": "empty_monitor",
+      "kind": "illustration",
+      "usage": "监测等待数据插画",
+      "file": "illustrations/empty_monitor.png",
+      "prompt": "Use case: productivity-visual. One flat 2D explanatory illustration for the empty state of a ground-test data monitor: a connector module on the left, a short orderly trail of empty packet outlines, and an empty oscilloscope screen on the right. It explains that a data source feeds the display; the display itself is blank with no fabricated waveform, axes, values or live indicators. Charcoal #263238 clean precise monoline contours and tiny petrol teal #1b6c80 connector detail. Actual transparent alpha background, centered wide composition, generous margins. No words, letters, numbers, logos, gradients, shadows, glow, photographs or 3D.",
+      "transparent_background": true,
+      "source_file": "generated/exec-802d3643-f5e0-4ca0-9869-94f84c0ea19e.png",
+      "state": "ready",
+      "size": [
+        1774,
+        887
+      ],
+      "mode": "RGBA",
+      "sha256": "65b5e8ca68417bc4916a11daaf1a348881add8e1dce5c2c2f1894835962665c5"
+    },
+    {
+      "id": "empty_archive",
+      "kind": "illustration",
+      "usage": "离线归档空状态插画",
+      "file": "illustrations/empty_archive.png",
+      "prompt": "Use case: productivity-visual. A professional flat 2D empty-state illustration for offline archive analysis: a closed archive box, one neatly aligned blank record sheet with simple packet strips, and a magnifying glass resting beside it. Communicate choosing a saved recording to inspect. Charcoal #263238 geometric monoline outlines, restrained petrol teal #1b6c80 detail, white interior negative space, actual transparent alpha background. Wide balanced composition, generous margins. No text, letters, numbers, graphs, status checkmarks, fake analysis results, gradients, shadows, glow, photographs or 3D.",
+      "transparent_background": true,
+      "source_file": "generated/exec-29882eea-cc44-488a-88a3-f26de6bff195.png",
+      "state": "ready",
+      "size": [
+        1774,
+        887
+      ],
+      "mode": "RGBA",
+      "sha256": "ddc821e86fd75fceb5c4e9239485efde3c2fbc79dcbf4dd8e9d41cb7d5543e03"
+    },
+    {
+      "id": "relations_guide",
+      "kind": "illustration",
+      "usage": "数据关联流程示意",
+      "file": "illustrations/relations_guide.png",
+      "prompt": "Use case: productivity-visual. A flat 2D explanatory diagram illustration for a bus data relation workbench. Three small input record nodes on the left feed through distinct orderly lines into one simple calculation block, then one output node on the right. Show the conceptual path select multiple inputs, combine them, inspect the output. Charcoal #263238 precise geometric monoline contours and one subtle petrol teal #1b6c80 path, actual transparent alpha background. Single wide horizontal illustration with generous margins, no surrounding card. No text, letters, numbers, math expressions, real charts, fabricated values, gradients, shadows, glow, photographs or 3D.",
+      "transparent_background": true,
+      "source_file": "generated/exec-62c7e6e1-eb1f-486e-80fb-2477b156b498.png",
+      "state": "ready",
+      "size": [
+        2172,
+        724
+      ],
+      "mode": "RGBA",
+      "sha256": "42d0c9eedc4de56867f92b0769a652d675409bf6707267eea68ae62a12632e53"
+    },
+    {
+      "id": "archive_workflow",
+      "kind": "illustration",
+      "usage": "归档回放流程示意",
+      "file": "illustrations/archive_workflow.png",
+      "prompt": "Use case: productivity-visual. Create a crisp engineering FLOWCHART ILLUSTRATION as if drawn in a vector diagram editor. A wide row of three simple discrete symbols, linked by two straight solid arrows. Left: three overlapping record sheets with two packet-strip marks. Middle: a plain circular clock face wrapped by one replay arrow. Right: a plain empty rectangular computer monitor with a tiny three-node origin connector. Uniform solid dark charcoal #263238 ink outlines, hard clean edges, flat white fills inside enclosed shapes, exactly one small solid teal #1b6c80 detail. Every symbol and stroke is FULLY OPAQUE; outside the symbols is genuinely transparent alpha. Plain printed line diagram, uncomplicated shapes, generous whitespace. No text, letters, numerals, gradients, shadows, bloom, blur, halo, haze, 3D, photographic materials, live waveforms or measured data. Produce only this single horizontal diagram, nothing else.",
+      "transparent_background": true,
+      "source_file": "generated/exec-20b4c924-11ca-4e35-bb06-5fffa226fb70.png",
+      "state": "ready",
+      "size": [
+        2172,
+        724
+      ],
+      "mode": "RGBA",
+      "sha256": "d6a602bf0f14fd7f7b0ea4621ffb35d563eb960dcd1ffe7039e3f47fb7b5dff1",
+      "selected_iteration": 3
+    }
+  ]
+}

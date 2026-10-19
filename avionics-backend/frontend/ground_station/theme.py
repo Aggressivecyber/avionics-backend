@@ -1,5 +1,5 @@
 """Framed-sheet tokens shared by Qt controls, tables and native plots."""
-from pathlib import Path
+from .ui_assets import ASSET_DIR
 
 GROUND = "#f9fbfc"
 SURFACE = "#ffffff"
@@ -16,11 +16,14 @@ NEGATIVE = "#c4242a"
 WARNING = "#92400e"
 ALERT_STYLE = "background:#fffbeb;color:#92400e;"
 RUNNING_STYLE = "background:#dcfae5;color:#04250e;"
-CHEVRON = (Path(__file__).with_name("assets") / "chevron-down.svg").as_posix()
+CHEVRON = (ASSET_DIR / "chevron-down.svg").as_posix()
+BACKGROUND = (ASSET_DIR / "background" / "workspace_background.png").as_posix()
 
 STYLE = f"""
 QWidget {{ font-family: 'Microsoft YaHei UI'; font-size: 14px; color: {INK}; }}
-QMainWindow, QWidget#frame, QFrame#rail {{ background: {GROUND}; }}
+QMainWindow {{ background: {GROUND}; }}
+QWidget#appBackground {{ border-image: url("{BACKGROUND}") 0 0 0 0 stretch stretch; }}
+QWidget#frame, QFrame#rail {{ background: transparent; }}
 QDialog {{ background: {GROUND}; }}
 QWidget#pluginGrid {{ background: {SURFACE}; }}
 QFrame#sheet {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 16px; }}
@@ -64,6 +67,11 @@ QComboBox QAbstractItemView {{ background: {SURFACE}; color: {INK}; border: 1px 
                              selection-background-color: {ACTIVE}; selection-color: {INK}; }}
 QComboBox QAbstractItemView::item {{ min-height: 28px; padding: 4px 8px; border-radius: 4px; }}
 QComboBox QAbstractItemView::item:selected {{ background: {ACTIVE}; color: {INK}; }}
+QMenu {{ background: {SURFACE}; color: {INK}; border: 1px solid {CONTROL}; border-radius: 6px; padding: 4px; }}
+QMenu::item {{ padding: 6px 16px; border-radius: 4px; }}
+QMenu::item:selected {{ background: {ACTIVE}; color: {INK}; }}
+QMenu::item:disabled {{ color: {MUTED}; }}
+QMenu::separator {{ background: {RULE}; height: 1px; margin: 4px 8px; }}
 QTableView, QTableWidget {{ background: {SURFACE}; border: none; gridline-color: {RULE};
                          selection-background-color: {ACTIVE}; selection-color: {INK}; }}
 QTableView::item {{ padding: 6px; border-bottom: 1px solid {RULE}; }}

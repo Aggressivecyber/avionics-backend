@@ -7,11 +7,11 @@ import re
 import time
 from uuid import uuid4
 
-from PySide6.QtCore import QProcess, QSortFilterProxyModel, Qt, QTimer, QUrl
+from PySide6.QtCore import QProcess, QSize, QSortFilterProxyModel, Qt, QTimer, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPalette, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
-    QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
+    QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMainWindow, QPlainTextEdit, QPushButton,
     QStackedWidget, QStatusBar, QTableView, QTableWidget, QTableWidgetItem,
@@ -25,6 +25,7 @@ from .plugin_center import PluginCenter, ReplaySetupDialog
 from .relations_page import RelationsPage
 from .theme import ACTIVE, ALERT_STYLE, INK, MUTED, NEGATIVE, RUNNING_STYLE, STYLE
 from .widgets import ThinSplitter
+from .ui_assets import ASSET_DIR, artwork, icon
 
 
 def label(text, name=None):
@@ -35,8 +36,11 @@ def label(text, name=None):
     return widget
 
 
-def button(text, callback, primary=False):
+def button(text, callback, primary=False, icon_name=None):
     widget = QPushButton(text)
+    if icon_name:
+        widget.setIcon(icon(icon_name, light=primary))
+        widget.setIconSize(QSize(18, 18))
     if primary:
         widget.setObjectName("primary")
     widget.clicked.connect(callback)
@@ -80,7 +84,7 @@ class SourceDialog(QDialog):
         self.config = QLineEdit(values[2] if values else "period_ms=20;initial_milli=20000;step_milli=10")
         row = QHBoxLayout()
         row.addWidget(self.plugin)
-        self.plugin_browse = button("浏览", self.browse)
+        self.plugin_browse = button("浏览", self.browse, icon_name="browse")
         row.addWidget(self.plugin_browse)
         form.addRow("逻辑源 ID", self.source)
         form.addRow("插件文件", row)
@@ -159,7 +163,8 @@ class MainWindow(QMainWindow):
         self.offline_stdout = bytearray()
         self.offline_stderr = bytearray()
         self.offline_summary = None
-        self.setWindowTitle(f"AEROBUS v{__version__} · 插件与数据关联工作台")
+        self.setWindowTitle(f"AEROBUS v{__version__} · 地面总线试验与分析工作台")
+        self.setWindowIcon(icon("monitor"))
         self.resize(1440, 920)
         self.setMinimumSize(1160, 780)
         palette = self.palette()
@@ -178,7 +183,7 @@ class MainWindow(QMainWindow):
     def build_ui(self, configuration):
         # At 1440 px: 228 sidebar + 8 outer inset + 1204 sheet; sheet gutters are 24 px each.
         root = QWidget()
-        root.setObjectName("frame")
+        root.setObjectName("appBackground")
         layout = QHBoxLayout(root)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -193,7 +198,7 @@ class MainWindow(QMainWindow):
         mark = QPixmap(28, 28)
         mark.fill(Qt.GlobalColor.transparent)
         painter = QPainter(mark)
-        QSvgRenderer(str(Path(__file__).with_name("assets") / "aerobus.svg")).render(painter)
+        QSvgRenderer(str(ASSET_DIR / "aerobus.svg")).render(painter)
         painter.end()
         self.brand_mark.setPixmap(mark)
         self.brand_mark.setFixedSize(28, 28)
@@ -203,12 +208,13 @@ class MainWindow(QMainWindow):
         navigation.addLayout(identity)
         navigation.addWidget(label("地面总线试验", "muted"))
         navigation.addSpacing(28)
-        self.monitor_nav = button("监测工作台", lambda: self.navigate(0))
-        self.offline_nav = button("离线分析", lambda: self.navigate(1))
-        self.plugins_nav = button("插件中心", lambda: self.navigate(2))
-        self.relations_nav = button("数据关联", lambda: self.navigate(3))
+        self.monitor_nav = button("监测工作台", lambda: self.navigate(0), icon_name="monitor")
+        self.offline_nav = button("离线分析", lambda: self.navigate(1), icon_name="archive")
+        self.plugins_nav = button("插件中心", lambda: self.navigate(2), icon_name="plugins")
+        self.relations_nav = button("数据关联", lambda: self.navigate(3), icon_name="relations")
         for nav in (self.plugins_nav, self.monitor_nav, self.relations_nav, self.offline_nav):
             nav.setCheckable(True)
+            nav.setIconSize(QSize(20, 20))
             navigation.addWidget(nav)
         navigation.addStretch()
         navigation.addWidget(label("原始归档 · 参数分析", "muted"))
@@ -234,9 +240,9 @@ class MainWindow(QMainWindow):
         self.badge.setMaximumWidth(240)
         self.badge.setWordWrap(True)
         actions.addWidget(self.badge)
-        self.new_button = button("新建会话", self.new_session)
-        self.capture_button = button("开始采集", self.start_capture, True)
-        self.end_button = button("结束并封存", self.end_session)
+        self.new_button = button("新建会话", self.new_session, icon_name="new_session")
+        self.capture_button = button("开始采集", self.start_capture, True, icon_name="capture_start")
+        self.end_button = button("结束并封存", self.end_session, icon_name="capture_stop")
         for action in (self.new_button, self.capture_button, self.end_button):
             actions.addWidget(action)
         body_layout.addWidget(toolbar)
@@ -249,7 +255,7 @@ class MainWindow(QMainWindow):
         self.heading = label("插件中心", "heading")
         title_row.addWidget(self.heading)
         title_row.addStretch()
-        self.config_toggle = button("试验配置", lambda: self.config_dialog.exec())
+        self.config_toggle = button("试验配置", lambda: self.config_dialog.exec(), icon_name="settings")
         self.config_toggle.setToolTip("查看字典、规则与数据目录。")
         title_row.addWidget(self.config_toggle)
         sheet_layout.addLayout(title_row)
@@ -258,7 +264,7 @@ class MainWindow(QMainWindow):
         self.config_path = QLineEdit(str(configuration))
         self.config_path.setReadOnly(True)
         self.config_path.setToolTip(str(configuration))
-        self.config_button = button("字典 / 规则", self.browse_configuration)
+        self.config_button = button("字典 / 规则", self.browse_configuration, icon_name="browse")
         session_row.addWidget(self.config_path, 1)
         session_row.addWidget(self.config_button)
         session.addLayout(session_row)
@@ -270,7 +276,7 @@ class MainWindow(QMainWindow):
         path_row.addWidget(self.storage_label, 1)
         self.storage_button = button("选择目录", self.browse_storage)
         path_row.addWidget(self.storage_button)
-        path_row.addWidget(button("打开目录", self.open_data_directory))
+        path_row.addWidget(button("打开目录", self.open_data_directory, icon_name="folder"))
         session.addLayout(path_row)
         self.config_dialog = QDialog(self)
         self.config_dialog.setWindowTitle("试验配置 · 字典与数据目录")
@@ -341,7 +347,7 @@ class MainWindow(QMainWindow):
         heading = QHBoxLayout()
         heading.addWidget(label("采集源", "section"))
         heading.addStretch()
-        self.add_button = button("添加源", self.add_source)
+        self.add_button = button("添加源", self.add_source, icon_name="add_source")
         heading.addWidget(self.add_button)
         content.addLayout(heading)
         self.sources = QTableWidget(0, 3)
@@ -362,7 +368,7 @@ class MainWindow(QMainWindow):
         actions = QGridLayout()
         self.start_button = button("启动源", lambda: self.source_action("start"))
         self.stop_button = button("停止源", lambda: self.source_action("stop"))
-        self.replace_button = button("替换插件", self.replace_source)
+        self.replace_button = button("替换插件", self.replace_source, icon_name="replace_source")
         self.remove_button = button("移除源", lambda: self.source_action("remove"))
         for widget, row, column in [(self.start_button, 0, 0), (self.stop_button, 0, 1),
                                     (self.replace_button, 1, 0), (self.remove_button, 1, 1)]:
@@ -441,13 +447,13 @@ class MainWindow(QMainWindow):
                                        ("字典 / 规则", self.offline_config, self.browse_offline_config)]:
             row = QHBoxLayout()
             row.addWidget(field)
-            row.addWidget(button("浏览", callback))
+            row.addWidget(button("浏览", callback, icon_name="browse"))
             form.addRow(title, row)
         form.addRow("新输出目录", self.offline_output)
         content.addLayout(form)
         actions = QHBoxLayout()
-        self.inspect_button = button("校验归档完整性", lambda: self.start_offline("inspect"))
-        self.analyze_button = button("执行离线分析", lambda: self.start_offline("analyze"))
+        self.inspect_button = button("校验归档完整性", lambda: self.start_offline("inspect"), icon_name="inspect")
+        self.analyze_button = button("执行离线分析", lambda: self.start_offline("analyze"), icon_name="analyze")
         actions.addWidget(self.inspect_button)
         actions.addWidget(self.analyze_button)
         actions.addStretch()
@@ -472,7 +478,20 @@ class MainWindow(QMainWindow):
         self.offline_tabs.addTab(self.offline_event_view, "关联事件")
         self.offline_tabs.addTab(self.offline_parameter_view, "参数")
         self.offline_tabs.addTab(self.offline_detail, "完整性 / 分析回执")
-        result_content.addWidget(self.offline_tabs, 1)
+        self.offline_results = QStackedWidget()
+        empty = QWidget()
+        empty_layout = QVBoxLayout(empty)
+        empty_layout.addStretch()
+        self.offline_empty = QLabel()
+        self.offline_empty.setPixmap(artwork("empty_archive").scaled(260, 120,
+            Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        empty_layout.addWidget(self.offline_empty, alignment=Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(label("选择已保存的 .avbus 归档，校验完整性或重新分析。", "muted"),
+                               alignment=Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addStretch()
+        self.offline_results.addWidget(empty)
+        self.offline_results.addWidget(self.offline_tabs)
+        result_content.addWidget(self.offline_results, 1)
         layout.addWidget(results_card, 1)
         return page
 
@@ -914,6 +933,12 @@ class MainWindow(QMainWindow):
         dialog.setWindowTitle("数据与证据溯源")
         dialog.resize(780, 580)
         layout = QVBoxLayout(dialog)
+        heading = QHBoxLayout()
+        image = QLabel()
+        image.setPixmap(icon("raw_packet").pixmap(48, 48))
+        heading.addWidget(image)
+        heading.addWidget(label("参数与原始记录证据", "section"), 1)
+        layout.addLayout(heading)
         text = QPlainTextEdit()
         text.setReadOnly(True)
         text.setPlainText(json.dumps(evidence, ensure_ascii=False, indent=2))
@@ -954,6 +979,7 @@ class MainWindow(QMainWindow):
                 arguments = ["--analyze", str(configuration), str(archive), str(output)]
             self.offline_mode = mode
             self.offline_summary = None
+            self.offline_results.setCurrentIndex(1)
             self.offline_stdout.clear()
             self.offline_stderr.clear()
             self.offline_parameter_model.clear()
@@ -981,6 +1007,7 @@ class MainWindow(QMainWindow):
             self.inspect_button.setEnabled(True)
             self.analyze_button.setEnabled(True)
             self.offline_status.setText("分析程序无法启动：" + self.offline_process.errorString())
+            self.offline_results.setCurrentIndex(0)
 
     def offline_finished(self, exit_code, exit_status):
         mode = self.offline_mode
@@ -1010,8 +1037,18 @@ class MainWindow(QMainWindow):
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, ValueError) as error:
             self.offline_summary = None
             self.offline_summary_label.setText("操作失败 · 结果未通过校验")
+            self.offline_results.setCurrentIndex(0)
             self.offline_status.setText("失败：" + str(error))
             self.log_message("离线分析失败：" + str(error))
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if QApplication.platformName() == "offscreen":
+            return
+        available = self.screen().availableGeometry()
+        frame = self.frameGeometry()
+        self.resize(min(self.width(), available.width() - (frame.width() - self.width())),
+                    min(self.height(), available.height() - (frame.height() - self.height())))
 
     def closeEvent(self, event):
         if self.offline_mode:

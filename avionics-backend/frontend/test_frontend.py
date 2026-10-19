@@ -14,13 +14,14 @@ from uuid import uuid4
 
 sys.dont_write_bytecode = True
 from PySide6.QtCore import QPoint, QTimer, Qt
-from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetricsF
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetricsF, QPixmap
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QSplitter, QStyle, QStyleOptionSlider
+from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QSplitter, QStyle, QStyleOptionSlider, QVBoxLayout, QWidget
 
 from ground_station.backend import BackendClient, writable_data_path
 from ground_station.window import MainWindow, SourceDialog
 from ground_station.plugin_center import PluginDetailsDialog, ReplaySetupDialog
+from ground_station.ui_assets import ASSET_DIR
 
 
 parser = argparse.ArgumentParser()
@@ -68,6 +69,9 @@ class FrontendIntegration(unittest.TestCase):
         self.window = MainWindow(args.bin_dir, self.data_dir, self.configuration)
         self.window.show()
         QTest.qWait(30)
+        if app.platformName() != "offscreen":
+            self.assertTrue(self.window.screen().availableGeometry().contains(self.window.frameGeometry()),
+                            (self.window.frameGeometry(), self.window.screen().availableGeometry()))
 
     def tearDown(self):
         if self.window.client.active and not self.window.client.closing:
@@ -359,6 +363,13 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(window.recording_status.text(), "采集中")
         self.assertEqual(window.pages.currentIndex(), 0)
         wait_until(lambda: not window.capture_button.isEnabled())
+        def inspect_evidence():
+            dialog = QApplication.activeModalWidget()
+            self.assertEqual(dialog.windowTitle(), "数据与证据溯源")
+            self.assertTrue(dialog.grab().save(str(args.output / "evidence.png")))
+            dialog.reject()
+        QTimer.singleShot(80, inspect_evidence)
+        window.show_evidence(window.parameter_model.rows[0])
         # Thin handles keep their native hit regions and still resize/scroll the data panes.
         dragged = []
         for splitter in window.pages.widget(0).findChildren(QSplitter):
@@ -484,6 +495,7 @@ class FrontendIntegration(unittest.TestCase):
             self.assertIsInstance(dialog, ReplaySetupDialog)
             dialog.archive.setText(str(archive))
             dialog.speed.setValue(1)
+            self.assertTrue(dialog.grab().save(str(args.output / "replay-setup.png")))
             dialog.validate()
         QTimer.singleShot(80, configure_replay)
         QTest.mouseClick(window.plugin_center.cards["replay"].start_button, Qt.MouseButton.LeftButton)
@@ -570,6 +582,71 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(window.last_metadata["analysis_status"], "complete")
         receipt["checks"].append({"name": self._testMethodName, "status": "passed", "enable_without_capture": True,
             "parameter_count": 7, "relation": "1553B温差", "restart_requires_start_button": True, "metadata": window.last_metadata})
+
+    def test_07_artwork_pack_and_empty_states(self):
+        manifest = json.loads((ASSET_DIR / "prompts.json").read_text(encoding="utf-8"))
+        entries = manifest["assets"]
+        self.assertGreaterEqual(len(entries), 20)
+        self.assertEqual(len({entry["id"] for entry in entries}), len(entries))
+        self.assertEqual({entry["kind"] for entry in entries}, {"icon", "background", "illustration"})
+        hashes = []
+        catalog = QWidget()
+        catalog.setWindowTitle("AEROBUS · 美术素材验收")
+        catalog.setStyleSheet(self.window.styleSheet())
+        catalog.setObjectName("sheet")
+        root = QVBoxLayout(catalog)
+        title = QLabel(f"AEROBUS · {len(entries)} 项美术素材")
+        title.setObjectName("heading")
+        root.addWidget(title)
+        grid = QGridLayout()
+        grid.setSpacing(8)
+        for i, entry in enumerate(entries):
+            path = ASSET_DIR / entry["file"]
+            self.assertEqual(digest(path), entry["sha256"])
+            hashes.append(entry["sha256"])
+            pixmap = QPixmap(str(path))
+            self.assertFalse(pixmap.isNull(), entry["id"])
+            self.assertEqual([pixmap.width(), pixmap.height()], entry["size"])
+            if entry["transparent_background"]:
+                image = pixmap.toImage()
+                self.assertTrue(image.hasAlphaChannel(), entry["id"])
+                # Allow up to 2/255 alpha residue along otherwise transparent edges.
+                self.assertLessEqual(image.pixelColor(0, 0).alpha(), 2, entry["id"])
+                self.assertTrue(any(image.pixelColor(x, y).alpha() > 0
+                    for x in range(0, image.width(), image.width() // 16)
+                    for y in range(0, image.height(), image.height() // 16)), entry["id"])
+            tile = QWidget()
+            content = QVBoxLayout(tile)
+            content.setContentsMargins(4, 4, 4, 4)
+            content.setSpacing(4)
+            picture = QLabel()
+            picture.setPixmap(pixmap.scaled(144, 80, Qt.AspectRatioMode.KeepAspectRatio,
+                                           Qt.TransformationMode.SmoothTransformation))
+            picture.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            content.addWidget(picture)
+            caption = QLabel(entry["usage"])
+            caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            content.addWidget(caption)
+            filename = QLabel(entry["id"])
+            filename.setObjectName("muted")
+            filename.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            content.addWidget(filename)
+            grid.addWidget(tile, i // 6, i % 6)
+        self.assertEqual(len(set(hashes)), len(entries))
+        root.addLayout(grid, 1)
+        catalog.resize(1380, 840)
+        catalog.show()
+        QTest.qWait(50)
+        self.assertTrue(catalog.grab().save(str(args.output / "asset-catalog.png")))
+        catalog.close()
+        for page in (0, 1, 3):
+            self.window.navigate(page)
+            QTest.qWait(30)
+            self.assertTrue(self.window.grab().save(str(args.output / f"empty-page-{page}.png")))
+        self.assertEqual(self.window.offline_results.currentIndex(), 0)
+        receipt["checks"].append({"name": self._testMethodName, "status": "passed",
+            "generated_asset_count": len(entries), "unique_sha256": len(set(hashes)),
+            "kinds": sorted({entry["kind"] for entry in entries}), "native_png_decoding": True})
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ def main():
     for name in ("gcc-libs", "libwinpthread"):
         shutil.copytree(licenses / name, output / "licenses" / name)
     shutil.copytree(root / "config", output / "config")
+    shutil.copytree(root / "asset", output / "asset", ignore=shutil.ignore_patterns("generated", ".gitignore"))
     shutil.copytree(root / "docs", output / "docs")
     shutil.copy2(root / "README.md", output / "README.md")
     shutil.copytree(root / "frontend" / "ground_station", output / "frontend" / "ground_station",

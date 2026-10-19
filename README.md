@@ -1,16 +1,24 @@
-# 机载总线监控后端
+# AEROBUS · 地面总线试验与分析工作台
 
-当前开发版本为地面总线监测工作台v0.5.0，包含Qt前端、独立采集进程和1553B软件监控输入。使用入口见 [当前说明](avionics-backend/README.md)、[当前架构](avionics-backend/docs/architecture.md) 和 [1553B软件验证](avionics-backend/docs/mil1553b-software.md)。下文为最初v0.2阶段说明。
+当前版本 v0.5.0，集成目标分支为 `main`。项目包含 Qt 桌面前端、独立采集进程、1553B 软件监控输入、原始归档、参数解码、时间关联与离线分析。
 
-C++20 / g++ 的面向对象后端工程，源码位于 [`avionics-backend/`](avionics-backend/)。提供模拟采集、采集插件热替换、原始记录与回放、配置化参数解码及关联分析。
+在插件中心启用所需插件，点击顶部“开始采集”后开始记录；底部持续显示状态与实际保存路径。数据关联页支持多路参数、命名公式和随时间变化的结果。内置演示和 1553B 验证使用软件合成数据，采集卡 SDK、ICD 和实际设备负载验收待确定。
 
-本轮完成多协议扩展的抽象接口：默认自动识别，允许按来源和通道手动指定协议。具体识别算法、路由器和真实协议解析器留待后续实现；当前没有真实硬件依赖。
+源码项目位于 [`avionics-backend/`](avionics-backend/)，包括：
+
+- [`frontend/`](avionics-backend/frontend/)：Qt 工作台、插件中心、监测、数据关联和离线分析。
+- [`asset/`](avionics-backend/asset/)：统一美术素材，包含功能图形、背景、场景、空状态和流程示意；提示词与用途保存在 `prompts.json`。
+- [`src/`](avionics-backend/src/) 与 [`plugins/`](avionics-backend/plugins/)：C++ 采集宿主、隔离进程、协议与参数处理、存储以及采集插件。
+- [`config/`](avionics-backend/config/)：字典、规则、时钟与协议输入配置。
+- [`docs/`](avionics-backend/docs/)：使用、架构和验收边界。
 
 - [协议抽象类与选择策略](avionics-backend/docs/protocol-abstractions.md)
 - [抽象接口头文件](avionics-backend/include/core/protocol_interfaces.hpp)
 - [协议数据类型](avionics-backend/include/core/protocol_types.hpp)
 - [构建、运行与已有功能](avionics-backend/README.md)
-- [后端架构](avionics-backend/docs/architecture.md)
+- [当前系统架构](avionics-backend/docs/architecture.md)
+- [Qt 工作台操作](avionics-backend/docs/qt-frontend.md)
+- [1553B 软件验证](avionics-backend/docs/mil1553b-software.md)
 
 在 Windows / MinGW 环境构建并测试：
 

@@ -2,11 +2,12 @@ from collections import deque
 import json
 import math
 
-from PySide6.QtCore import QAbstractTableModel, QLineF, QModelIndex, QPointF, QRectF, Qt
+from PySide6.QtCore import QAbstractTableModel, QLineF, QModelIndex, QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
 from .theme import ACCENT, BORDER, MUTED, POSITIVE, SURFACE, WARNING
+from .ui_assets import artwork
 
 
 def display_value(value):
@@ -131,7 +132,7 @@ class EventModel(QAbstractTableModel):
 
 
 class TrendPlot(QWidget):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, empty_artwork="empty_monitor", empty_caption="等待数据 · 先启用插件，再开始采集"):
         super().__init__(parent)
         self.setMinimumHeight(175)
         self.key = None
@@ -140,6 +141,8 @@ class TrendPlot(QWidget):
         self.unit = ""
         self.time_origin = None
         self.boolean_axis = False
+        self.empty_image = artwork(empty_artwork)
+        self.empty_caption = empty_caption
 
     def select(self, key, samples):
         self.key = key
@@ -170,16 +173,20 @@ class TrendPlot(QWidget):
         axis_font = painter.font()
         axis_font.setPixelSize(12)
         painter.setFont(axis_font)
+        valid = [point for point in self.points if point is not None]
+        if not valid:
+            image = self.empty_image.scaled(QSize(min(280, self.width() - 32), min(108, self.height() - 34)),
+                Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap((self.width() - image.width()) // 2, (self.height() - 34 - image.height()) // 2, image)
+            painter.setPen(QColor(MUTED))
+            painter.drawText(QRectF(0, self.height() - 28, self.width(), 24),
+                             Qt.AlignmentFlag.AlignCenter, self.empty_caption)
+            return
         area = QRectF(68, 20, max(1, self.width() - 91), max(1, self.height() - 58))
         painter.setPen(QPen(QColor(BORDER), 1))
         for i in range(5):
             y = area.top() + area.height() * i / 4
             painter.drawLine(QLineF(area.left(), y, area.right(), y))
-        valid = [point for point in self.points if point is not None]
-        if not valid:
-            painter.setPen(QColor(MUTED))
-            painter.drawText(area, Qt.AlignmentFlag.AlignCenter, "等待有效数据 · 开始采集后显示时间趋势")
-            return
         x0, x1 = min(p[0] for p in valid), max(p[0] for p in valid)
         low, high = min(p[1] for p in valid), max(p[1] for p in valid)
         padding = max((high - low) * .12, abs(high) * .002, .001)

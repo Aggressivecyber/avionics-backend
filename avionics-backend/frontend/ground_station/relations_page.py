@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QDo
 from .models import ParameterModel, TrendPlot, display_value
 from .relations import RelationEngine
 from .widgets import ThinSplitter
+from .ui_assets import icon
 
 
 class InputModel(ParameterModel):
@@ -146,6 +147,7 @@ class RelationsPage(QWidget):
             form.addWidget(field, row, column + 1)
         editor_layout.addLayout(form)
         self.create_button = QPushButton("创建并显示关系")
+        self.create_button.setIcon(icon("create_relation"))
         self.create_button.setToolTip("支持 + - * /、比较、and/or/not、abs()；关系定义自动保存。")
         self.create_button.clicked.connect(self.create_relation)
         editor_layout.addWidget(self.create_button)
@@ -168,6 +170,7 @@ class RelationsPage(QWidget):
         heading.addWidget(result_title)
         heading.addStretch()
         self.remove_button = QPushButton("删除所选关系")
+        self.remove_button.setIcon(icon("delete_relation"))
         self.remove_button.clicked.connect(self.remove_relation)
         heading.addWidget(self.remove_button)
         results.addLayout(heading)
@@ -201,8 +204,13 @@ class RelationsPage(QWidget):
         self.time_label.setObjectName("muted")
         self.time_label.setTextFormat(Qt.TextFormat.PlainText)
         self.time_label.setWordWrap(True)
-        results.addWidget(self.time_label)
-        self.plot = TrendPlot()
+        time_row = QHBoxLayout()
+        time_symbol = QLabel()
+        time_symbol.setPixmap(icon("time_alignment").pixmap(20, 20))
+        time_row.addWidget(time_symbol)
+        time_row.addWidget(self.time_label, 1)
+        results.addLayout(time_row)
+        self.plot = TrendPlot(empty_artwork="relations_guide", empty_caption="先勾选参数，再创建命名关系")
         self.plot.setMinimumHeight(150)
         results.addWidget(self.plot, 1)
         self.details = QLabel("条件值在曲线上以 0 / 1 表示。输入无效或超出对齐窗口时曲线断开。")

@@ -1,6 +1,7 @@
 [
   {
     "id": "demo",
+    "artwork": "demo",
     "name": "合成演示插件",
     "library": "bus_simulated",
     "category": "内置 · 模拟数据",
@@ -19,6 +20,7 @@
   },
   {
     "id": "mil1553b",
+    "artwork": "mil1553b",
     "name": "1553B软件验证插件",
     "library": "bus_mil1553b_simulated",
     "category": "内置 · 1553B合成输入",
@@ -33,6 +35,7 @@
   },
   {
     "id": "replay",
+    "artwork": "replay",
     "name": "归档回放插件",
     "library": "bus_replay",
     "category": "内置 · 历史数据",
