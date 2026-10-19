@@ -3,11 +3,12 @@ import json
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit,
-    QPushButton, QSplitter, QTableView, QTableWidget, QTableWidgetItem, QTabWidget,
+    QPushButton, QTableView, QTableWidget, QTableWidgetItem, QTabWidget,
     QSizePolicy, QVBoxLayout, QWidget)
 
 from .models import ParameterModel, TrendPlot, display_value
 from .relations import RelationEngine
+from .widgets import ThinSplitter
 
 
 class InputModel(ParameterModel):
@@ -74,9 +75,9 @@ class RelationsPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         self.tabs = QTabWidget()
-        workspace = QSplitter(Qt.Orientation.Horizontal)
+        workspace = ThinSplitter(Qt.Orientation.Horizontal)
         workspace.setHandleWidth(24)
-        controls = QSplitter(Qt.Orientation.Vertical)
+        controls = ThinSplitter(Qt.Orientation.Vertical)
         controls.setHandleWidth(24)
         controls.setMinimumWidth(360)
         left = QFrame()

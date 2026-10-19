@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
     QLineEdit, QMainWindow, QPlainTextEdit, QPushButton,
-    QSplitter, QStackedWidget, QTableView, QTableWidget, QTableWidgetItem,
+    QStackedWidget, QStatusBar, QTableView, QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -23,6 +23,7 @@ from .models import EventModel, ParameterModel, TrendPlot
 from .plugin_center import PluginCenter, ReplaySetupDialog
 from .relations_page import RelationsPage
 from .theme import ACTIVE, ALERT_STYLE, INK, MUTED, NEGATIVE, RUNNING_STYLE, STYLE
+from .widgets import ThinSplitter
 
 
 def label(text, name=None):
@@ -60,6 +61,8 @@ def table_view(model):
     view.verticalHeader().hide()
     view.verticalHeader().setDefaultSectionSize(36)
     view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+    view.horizontalHeader().setMinimumSectionSize(80)
+    view.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
     return view
 
 
@@ -292,6 +295,18 @@ class MainWindow(QMainWindow):
         body_layout.addWidget(sheet, 1)
         layout.addWidget(body, 1)
         self.setCentralWidget(root)
+        self.status_bar = QStatusBar()
+        self.status_bar.setSizeGripEnabled(False)
+        self.status_bar.setContentsMargins(20, 0, 16, 0)
+        self.recording_status = label("未开始采集", "muted")
+        self.archive_path = QLineEdit()
+        self.archive_path.setObjectName("archivePath")
+        self.archive_path.setReadOnly(True)
+        self.archive_path.setPlaceholderText("新建会话后生成 .avbus 文件")
+        self.status_bar.addPermanentWidget(self.recording_status)
+        self.status_bar.addPermanentWidget(label("· 自动保存为：", "muted"))
+        self.status_bar.addPermanentWidget(self.archive_path, 1)
+        self.setStatusBar(self.status_bar)
         self.navigate(2)
 
     def build_monitor(self):
@@ -319,7 +334,7 @@ class MainWindow(QMainWindow):
             self.metric_notes.append(sub)
             metrics.addLayout(content, 1)
         layout.addWidget(metrics_panel)
-        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter = ThinSplitter(Qt.Orientation.Horizontal)
         splitter.setHandleWidth(24)
         left, content = card()
         heading = QHBoxLayout()
@@ -357,9 +372,10 @@ class MainWindow(QMainWindow):
         self.source_note.setMinimumHeight(55)
         content.addWidget(self.source_note)
         splitter.addWidget(left)
-        right = QSplitter(Qt.Orientation.Vertical)
+        right = ThinSplitter(Qt.Orientation.Vertical)
         right.setHandleWidth(24)
         trend_card, trend = card()
+        trend.setContentsMargins(16, 12, 16, 12)
         trend_title = QHBoxLayout()
         trend_title.addWidget(label("参数趋势", "section"))
         trend_title.addStretch()
@@ -369,11 +385,13 @@ class MainWindow(QMainWindow):
         trend_title.addWidget(self.trend_selector)
         trend.addLayout(trend_title)
         self.plot = TrendPlot()
+        self.plot.setMinimumHeight(124)
         trend.addWidget(self.plot, 1)
         self.display_note = label("显示最近 512 个样本；完整参数与事件保存在会话目录。", "muted")
         trend.addWidget(self.display_note)
         right.addWidget(trend_card)
         tabs_card, tabs_content = card()
+        tabs_content.setContentsMargins(16, 12, 16, 12)
         tabs = QTabWidget()
         self.monitor_tabs = tabs
         self.parameter_model = ParameterModel(self)
@@ -517,7 +535,11 @@ class MainWindow(QMainWindow):
             self.badge.setStyleSheet("")
             self.client.start(self.archive, configuration)
             self.badge.setText("正在创建会话…")
+            self.recording_status.setText("正在创建会话")
+            self.archive_path.setText(str(self.archive))
+            self.archive_path.setToolTip(str(self.archive))
             self.message.setText("正在创建：" + self.archive.name)
+            self.message.show()
             self.message.setToolTip(str(self.archive))
             self.navigate(0)
         except (OSError, ValueError) as error:
@@ -552,6 +574,7 @@ class MainWindow(QMainWindow):
                     if source["status"]["state"] in {"configured", "stopped"}:
                         self.client.send("start", source["id"])
         self.message.setText("正在开始采集…")
+        self.recording_status.setText("正在开始采集")
         self.navigate(0)
         self.refresh_plugins()
 
@@ -623,6 +646,7 @@ class MainWindow(QMainWindow):
         self.refresh_plugins()
 
     def on_ready(self, message):
+        self.recording_status.setText("等待开始采集")
         self.log_message("会话已创建：" + message["archive"])
         self.log_message(f"后端版本 {message['build']['version']} · {message['build']['revision']}")
         self.message.setText("会话已就绪；请点击“开始采集”。归档：" + self.archive.name)
@@ -640,6 +664,7 @@ class MainWindow(QMainWindow):
     def end_session(self):
         self.client.send("quit")
         self.badge.setText("正在停止采集并封存…")
+        self.recording_status.setText("正在停止并封存")
         self.end_button.setEnabled(False)
         self.update_source_actions()
 
@@ -688,9 +713,22 @@ class MainWindow(QMainWindow):
             rate = (snapshot["recorded"] - self.last_counts[1]) / (now - self.last_counts[0])
         self.last_counts = now, snapshot["recorded"]
         self.last_snapshot_time = now
+        if not snapshot["healthy"]:
+            self.recording_status.setText("保存故障")
+        elif self.client.closing:
+            self.recording_status.setText("正在停止并封存")
+        elif any(source["status"]["state"] == "running" for source in snapshot["sources"]):
+            self.recording_status.setText("采集中")
+        elif snapshot["capture_degraded"]:
+            self.recording_status.setText("采集已停止 · 请检查源状态")
+        elif any(source["status"]["state"] == "stopped" for source in snapshot["sources"]):
+            self.recording_status.setText("已暂停采集")
+        else:
+            self.recording_status.setText("等待开始采集")
         if self.message.text() == "正在开始采集…" and any(
                 source["status"]["state"] == "running" for source in snapshot["sources"]):
             self.message.setText("采集中 · 原始归档：" + self.archive.name)
+            self.message.hide()
         for value, count in zip(self.metric_values,
                                 [snapshot["recorded"], snapshot["samples"], snapshot["results"], snapshot["dropped"]]):
             value.setText(f"{count:,}")
@@ -735,9 +773,11 @@ class MainWindow(QMainWindow):
         if not snapshot["healthy"]:
             self.badge.setText("原始记录故障 · 查看日志")
             self.message.setText(snapshot["failure"])
+            self.message.show()
         elif not snapshot["analysis_healthy"]:
             self.badge.setText("分析不完整 · 原始记录仍在采集")
             self.message.setText(snapshot["analysis_failure"])
+            self.message.show()
         elif snapshot["capture_degraded"]:
             self.badge.setText("采集降级 · 请查看源状态及日志")
         else:
@@ -755,6 +795,7 @@ class MainWindow(QMainWindow):
     def on_sealed(self, metadata):
         self.last_metadata = metadata
         healthy = metadata["recording_healthy"]
+        self.recording_status.setText("已结束 · 归档已封存" if healthy else "已结束 · 保存故障")
         complete = healthy and metadata["capture_status"] == "complete" and metadata["analysis_status"] == "complete"
         self.badge.setText("已封存 · 采集与分析完整" if complete else "会话结束 · 请检查降级 / 故障回执")
         self.badge.setStyleSheet("" if complete else ALERT_STYLE)
@@ -783,6 +824,7 @@ class MainWindow(QMainWindow):
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             self.log_message("封存后的显示数据读取失败：" + str(error))
         self.message.setText(f"已结束：记录 {metadata['recorded']:,} 帧，拒绝 {metadata['dropped']:,} 帧；回执 {self.archive}.session.json")
+        self.message.show()
         self.log_message("会话结束，已收到封存回执：" + metadata["capture_status"] + " / " + metadata["analysis_status"])
         self.offline_archive.setText(str(self.archive))
         self.offline_config.setText(str(self.archive) + ".analysis/configuration.ini")
@@ -791,6 +833,8 @@ class MainWindow(QMainWindow):
     def on_active(self, active):
         if not active:
             self.plugin_action_pending = False
+            if self.archive is not None:
+                self.recording_status.setText("采集已停止 · 等待封存回执")
         for widget in (self.new_button, self.config_button, self.storage_button, self.session_name):
             widget.setEnabled(not active)
         self.end_button.setEnabled(active and not self.client.closing)
@@ -824,18 +868,22 @@ class MainWindow(QMainWindow):
             if age > 2:
                 self.badge.setText(f"等待后端响应 · {age:.0f} s 未刷新")
                 self.badge.setStyleSheet(ALERT_STYLE)
+                self.recording_status.setText("状态未刷新 · 保存状态待确认")
 
     def log_message(self, text):
         self.log.appendPlainText(f"{datetime.now():%H:%M:%S}  {text}")
 
     def on_error(self, text):
         self.message.setText(text)
+        self.message.show()
         self.log_message("错误 · " + text)
         if not self.client.active:
             self.badge.setText("操作失败 · 查看日志")
         self.badge.setStyleSheet(ALERT_STYLE)
 
     def on_exit(self, code):
+        if self.archive is not None and self.last_metadata is None:
+            self.recording_status.setText("采集已停止 · 未确认封存")
         if self.close_pending:
             self.close()
 

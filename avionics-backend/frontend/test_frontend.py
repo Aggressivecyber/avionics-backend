@@ -16,7 +16,7 @@ sys.dont_write_bytecode = True
 from PySide6.QtCore import QPoint, QTimer, Qt
 from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetricsF
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QSplitter, QStyle, QStyleOptionSlider
 
 from ground_station.backend import BackendClient, writable_data_path
 from ground_station.window import MainWindow, SourceDialog
@@ -106,7 +106,8 @@ class FrontendIntegration(unittest.TestCase):
                 window.navigate(page)
                 QTest.qWait(30)
                 self.assertEqual((window.width(), window.height()), (width, height))
-                controls = [window.capture_button, window.end_button, window.heading]
+                controls = [window.capture_button, window.end_button, window.heading,
+                            window.recording_status, window.archive_path]
                 if page == 3:
                     controls += [window.relations_page.input_view, window.relations_page.create_button,
                                  window.relations_page.relationships, window.relations_page.plot]
@@ -119,6 +120,12 @@ class FrontendIntegration(unittest.TestCase):
                 if page == 1:
                     for field in (window.offline_archive, window.offline_config, window.offline_output):
                         self.assertGreaterEqual(field.height(), 32)
+                if page == 0:
+                    self.assertFalse(window.plot.geometry().intersects(window.display_note.geometry()))
+                    table = window.parameter_view
+                    for row in range(window.parameter_proxy.rowCount()):
+                        self.assertGreaterEqual(table.columnWidth(0), QFontMetricsF(table.font()).horizontalAdvance(
+                            window.parameter_proxy.index(row, 0).data()) + 12)
                 for control in controls:
                     self.assertTrue(control.isVisible())
                     bounds = control.rect().translated(control.mapTo(window, QPoint(0, 0)))
@@ -279,6 +286,7 @@ class FrontendIntegration(unittest.TestCase):
         self.assertIsNone(window.last_metadata)
         self.assertIn("失败", window.badge.text())
         self.assertIn("未收到封存回执", window.message.text())
+        self.assertIn("未确认封存", window.recording_status.text())
         window.offline_archive.setText(str(window.archive))
         window.start_offline("inspect")
         wait_until(lambda: window.offline_mode is None)
@@ -290,6 +298,8 @@ class FrontendIntegration(unittest.TestCase):
     def test_05_plugin_cards_and_named_relationships(self):
         window = self.window
         self.assertEqual(window.pages.currentIndex(), 2)
+        self.assertEqual(window.recording_status.text(), "未开始采集")
+        self.assertEqual(window.archive_path.text(), "")
         self.assertFalse(hasattr(window, "demo_button"))
         self.assertFalse(window.brand_mark.pixmap().isNull())
         mark = window.brand_mark.pixmap().toImage()
@@ -334,6 +344,10 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(window.latest_snapshot["recorded"], 0)
         self.assertEqual(window.latest_snapshot["samples"], 0)
         self.assertEqual(window.parameter_model.rowCount(), 0)
+        self.assertEqual(window.recording_status.text(), "等待开始采集")
+        self.assertEqual(window.archive_path.text(), str(window.archive))
+        self.assertEqual(window.archive_path.toolTip(), str(window.archive))
+        self.assertTrue(window.archive.is_file())
         self.assertTrue(all(source["status"]["state"] == "configured" for source in window.latest_snapshot["sources"]))
         self.assertIn("待开始", demo.status.text())
         window.navigate(2)
@@ -342,8 +356,53 @@ class FrontendIntegration(unittest.TestCase):
         self.capture_layouts("ready", (2,))
         QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.parameter_model.rowCount() == 4)
+        self.assertEqual(window.recording_status.text(), "采集中")
         self.assertEqual(window.pages.currentIndex(), 0)
         wait_until(lambda: not window.capture_button.isEnabled())
+        # Thin handles keep their native hit regions and still resize/scroll the data panes.
+        dragged = []
+        for splitter in window.pages.widget(0).findChildren(QSplitter):
+            original = splitter.sizes()
+            handle = splitter.handle(1)
+            center = handle.rect().center()
+            delta = QPoint(32, 0) if splitter.orientation() == Qt.Orientation.Horizontal else QPoint(0, 32)
+            QTest.mouseMove(handle, center)
+            QTest.mousePress(handle, Qt.MouseButton.LeftButton, pos=center)
+            QTest.mouseMove(handle, center + delta, 30)
+            QTest.mouseRelease(handle, Qt.MouseButton.LeftButton, pos=center + delta)
+            self.assertNotEqual(splitter.sizes(), original)
+            dragged.append(splitter.orientation().name)
+            splitter.setSizes(original)
+        window.resize(1160, 780)
+        QTest.qWait(40)
+        bar = window.parameter_view.horizontalScrollBar()
+        self.assertTrue(bar.isVisible())
+        self.assertGreater(bar.maximum(), 0)
+        bar.setValue(bar.minimum())
+        option = QStyleOptionSlider()
+        bar.initStyleOption(option)
+        thumb = bar.style().subControlRect(QStyle.ComplexControl.CC_ScrollBar, option,
+                                         QStyle.SubControl.SC_ScrollBarSlider, bar)
+        center = thumb.center()
+        QTest.mouseMove(bar, center)
+        self.assertTrue(window.grab().save(str(args.output / "thin-controls-hover.png")))
+        QTest.mousePress(bar, Qt.MouseButton.LeftButton, pos=center)
+        QTest.mouseMove(bar, center + QPoint(36, 0), 30)
+        QTest.mouseRelease(bar, Qt.MouseButton.LeftButton, pos=center + QPoint(36, 0))
+        self.assertGreater(bar.value(), bar.minimum())
+        bar.setValue(bar.minimum())
+        window.trend_selector.setCurrentIndex(0)
+        window.trend_selector.showPopup()
+        QTest.qWait(40)
+        popup = QApplication.activePopupWidget()
+        self.assertIsNotNone(popup)
+        self.assertTrue(popup.grab().save(str(args.output / "dropdown.png")))
+        QTest.keyClick(window.trend_selector.view(), Qt.Key.Key_Down)
+        QTest.keyClick(window.trend_selector.view(), Qt.Key.Key_Return)
+        self.assertEqual(window.trend_selector.currentIndex(), 1)
+        self.assertFalse(popup.isVisible())
+        window.resize(1440, 900)
+        QTest.qWait(40)
         page = window.relations_page
         QTest.mouseClick(window.relations_nav, Qt.MouseButton.LeftButton)
         QTest.qWait(30)
@@ -396,6 +455,7 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: all(self.source_state(source) == "已停止" for source in ("sensor_a", "sensor_b", "control", "feedback")))
         self.assertTrue(window.client.active)
         self.assertEqual(self.source_state("independent"), "运行中")
+        self.assertEqual(window.recording_status.text(), "采集中")
         before = next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"]
         wait_until(lambda: next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"] > before)
         self.assertIn("已停用", demo.status.text())
@@ -439,8 +499,11 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: replay.stop_button.isEnabled())
         QTest.mouseClick(replay.stop_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: self.source_state("replay") == "已停止")
+        self.assertEqual(window.recording_status.text(), "已暂停采集")
         window.end_session()
         wait_until(lambda: not window.client.active)
+        self.assertEqual(window.recording_status.text(), "已结束 · 归档已封存")
+        self.assertEqual(window.archive_path.text(), str(window.archive))
         reopened = MainWindow(args.bin_dir, self.data_dir, self.configuration)
         self.assertEqual([r.name for r in reopened.relations_page.engine.relations], ["双路温差", "温差条件", "三路组合"])
         reopened.close()
@@ -448,6 +511,9 @@ class FrontendIntegration(unittest.TestCase):
                                    "plugin_details_verified": True, "named_relations": 3,
                                    "enable_without_acquisition_verified": True,
                                    "capture_button_visible_on_all_pages": True,
+                                   "persistent_archive_status_verified": True,
+                                   "splitter_drag_verified": dragged, "scrollbar_drag_verified": True,
+                                   "dropdown_keyboard_selection_verified": True,
                                    "disabled_plugin_excluded_from_start": True,
                                    "stopping_demo_preserved_other_plugin": True,
                                    "replay_started_from_card": True, "definitions_reopened": True})
