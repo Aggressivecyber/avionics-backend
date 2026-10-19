@@ -19,6 +19,7 @@ RUNNING_STYLE = "background:#dcfae5;color:#04250e;"
 STYLE = f"""
 QWidget {{ font-family: 'Microsoft YaHei UI'; font-size: 14px; color: {INK}; }}
 QMainWindow, QWidget#frame, QFrame#rail {{ background: {GROUND}; }}
+QDialog {{ background: {GROUND}; }}
 QWidget#pluginGrid {{ background: {SURFACE}; }}
 QFrame#sheet {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 16px; }}
 QFrame#card {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 8px; }}
@@ -36,7 +37,7 @@ QLabel#muted {{ color: {MUTED}; font-size: 12px; }}
 QLabel#metric {{ font-size: 28px; font-weight: 400; }}
 QLabel#metricLead {{ font-size: 32px; font-weight: 400; }}
 QLabel#badge {{ border-radius: 4px; padding: 4px 8px; background: {ACTIVE}; color: {MUTED}; font-size: 12px; }}
-QPushButton {{ background: {SURFACE}; border: 1px solid {CONTROL}; border-radius: 6px; padding: 6px 12px; }}
+QPushButton {{ background: {SURFACE}; border: 1px solid {CONTROL}; border-radius: 6px; padding: 6px 12px; min-height: 18px; }}
 QPushButton:hover {{ border-color: {MUTED}; background: {RAISED}; }}
 QPushButton:pressed {{ background: {ACTIVE}; }}
 QPushButton:focus {{ border-color: {INK}; }}
@@ -47,7 +48,7 @@ QPushButton#primary:hover {{ background: #353736; }}
 QPushButton#primary:pressed {{ background: #000000; }}
 QPushButton#primary:disabled {{ background: {ACTIVE}; color: {MUTED}; border-color: {ACTIVE}; }}
 QLineEdit, QComboBox, QAbstractSpinBox {{ background: {SURFACE}; border: 1px solid {CONTROL}; border-radius: 6px;
-                       padding: 6px 8px; selection-background-color: {ACTIVE}; selection-color: {INK}; }}
+                       padding: 6px 8px; min-height: 20px; selection-background-color: {ACTIVE}; selection-color: {INK}; }}
 QLineEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{ border-color: {ACCENT}; }}
 QLineEdit:disabled, QAbstractSpinBox:disabled {{ color: {MUTED}; background: {RAISED}; }}
 QComboBox QAbstractItemView {{ background: {SURFACE}; selection-background-color: {ACTIVE}; selection-color: {INK}; }}

@@ -111,6 +111,9 @@ class FrontendIntegration(unittest.TestCase):
                     for row in range(table.rowCount()):
                         self.assertGreaterEqual(table.columnWidth(0),
                             QFontMetricsF(table.font()).horizontalAdvance(table.item(row, 0).text()) + 12)
+                if page == 1:
+                    for field in (window.offline_archive, window.offline_config, window.offline_output):
+                        self.assertGreaterEqual(field.height(), 32)
                 for control in controls:
                     self.assertTrue(control.isVisible())
                     bounds = control.rect().translated(control.mapTo(window, QPoint(0, 0)))
@@ -283,6 +286,8 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(window.pages.currentIndex(), 2)
         self.assertFalse(hasattr(window, "demo_button"))
         self.assertFalse(window.brand_mark.pixmap().isNull())
+        mark = window.brand_mark.pixmap().toImage()
+        self.assertTrue(any(mark.pixelColor(x, y).alpha() for x in range(mark.width()) for y in range(mark.height())))
         self.assertEqual(QFontInfo(window.parameter_view.font()).family(), "Microsoft YaHei UI")
         metrics = QFontMetricsF(window.parameter_view.font())
         self.assertLess(max(metrics.horizontalAdvance(c) for c in "0123456789") -
@@ -294,6 +299,14 @@ class FrontendIntegration(unittest.TestCase):
         window.navigate(2)
         self.assertFalse(any("关联" in window.monitor_tabs.tabText(i) for i in range(window.monitor_tabs.count())))
         self.assertTrue(window.grab().save(str(args.output / "plugins.png")))
+        def inspect_settings():
+            self.assertIs(QApplication.activeModalWidget(), window.config_dialog)
+            self.assertTrue(window.config_path.isVisible())
+            self.assertTrue(window.storage_label.isVisible())
+            self.assertTrue(window.config_dialog.grab().save(str(args.output / "settings.png")))
+            window.config_dialog.reject()
+        QTimer.singleShot(80, inspect_settings)
+        QTest.mouseClick(window.config_toggle, Qt.MouseButton.LeftButton)
         demo = window.plugin_center.cards["demo"]
         inspected = []
         def inspect_details():
