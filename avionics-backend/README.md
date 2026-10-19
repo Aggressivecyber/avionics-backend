@@ -1,4 +1,4 @@
-# 地面总线监测工作台 · v0.4.1
+# 地面总线监测工作台 · v0.4.2
 
 面向地面试验、总线监测和数据分析的 Qt 6 桌面前端与 C++20 后端。当前可运行模拟采集、回放、配置化参数解码、事件时间处理和关联分析。真实总线协议、采集卡 SDK、ICD、时钟同步与设备负载验收尚待选型。
 
@@ -8,7 +8,7 @@
 
 ## Qt 桌面前端
 
-前端采用 Qt Widgets / PySide6 6.9.2，通过异步 `QProcess` 控制独立后端。插件中心以卡片展示启动、停用和功能详情；演示作为插件启动后自动进入监测。独立的数据关联页面支持多选参数、命名公式或条件，以及时间曲线，后端规则事件也集中在该页面。会话封存、采集源管理、原始证据追溯和离线重算继续保留。
+前端采用 Qt Widgets / PySide6 6.9.2，通过异步 `QProcess` 控制独立后端。插件中心以卡片展示启用、停用和功能详情；启用插件只加载配置，点击顶部始终可见的“开始采集”才开始获取数据。独立的数据关联页面支持多选参数、命名公式或条件，以及时间曲线，后端规则事件也集中在该页面。会话封存、采集源管理、原始证据追溯和离线重算继续保留。
 
 本机可直接复用 D 盘已安装的 Python / Qt；程序数据和临时文件写入 E 盘：
 
@@ -77,7 +77,7 @@ python scripts/verify_capture_cli.py --build build-gcc-release
 源码提交后重新配置并构建，确保 `--version` 无 `dirty` 标记，再运行：
 
 ```powershell
-python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/v0.4.1
+python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/v0.4.2
 ```
 
 便携包包含宿主、采集进程、分析程序、两个内置插件、匹配的 MinGW 运行库及许可证、配置、文档、源码导出和 SHA-256 清单。发布使用独立目录，退出旧会话后切换目录；原始归档和旧目录保留，便于回退开发改动。失败替换会尝试恢复旧实例并明确报告结果。

@@ -25,7 +25,7 @@ class PluginCard(QFrame):
         category.setObjectName("muted")
         top.addWidget(category)
         top.addStretch()
-        self.status = QLabel("未启动")
+        self.status = QLabel("未启用")
         self.status.setObjectName("badge")
         top.addWidget(self.status)
         layout.addLayout(top)
@@ -38,12 +38,12 @@ class PluginCard(QFrame):
         summary.setWordWrap(True)
         summary.setMinimumHeight(54)
         layout.addWidget(summary)
-        self.runtime = QLabel("点击启动后进入监测工作台。")
+        self.runtime = QLabel("启用插件后就绪，由顶部“开始采集”按钮开始采集。")
         self.runtime.setObjectName("muted")
         self.runtime.setWordWrap(True)
         layout.addWidget(self.runtime)
         actions = QHBoxLayout()
-        self.start_button = QPushButton("启动")
+        self.start_button = QPushButton("启用插件")
         self.start_button.setObjectName("primary")
         self.stop_button = QPushButton("停用")
         self.details_button = QPushButton("查看详情")
@@ -80,7 +80,7 @@ class PluginDetailsDialog(QDialog):
 class ReplaySetupDialog(QDialog):
     def __init__(self, data_dir, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("启动归档回放插件")
+        self.setWindowTitle("启用归档回放插件")
         self.resize(650, 230)
         form = QFormLayout(self)
         self.source = QLineEdit("replay")
@@ -132,7 +132,7 @@ class PluginCenter(QWidget):
         self.sources_by_plugin = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        note = QLabel("选择插件启动采集；停用仅停止该插件的来源。点击详情查看功能、配置参数和当前状态。")
+        note = QLabel("先启用插件，再点击顶部“开始采集”；停用仅停止该插件的来源。点击详情查看功能、配置参数和当前状态。")
         note.setWordWrap(True)
         note.setObjectName("muted")
         layout.addWidget(note)
@@ -165,7 +165,7 @@ class PluginCenter(QWidget):
         dialog = PluginDetailsDialog(definition, states, self)
         dialog.exec()
 
-    def refresh(self, configurations, snapshot, active, ready, busy, closing):
+    def refresh(self, configurations, snapshot, active, ready, busy, closing, disabled_plugins):
         paths = {os.path.normcase(str(Path(card.definition["path"]).resolve())): card.definition for card in self.cards.values()}
         for source, path, config in configurations.values():
             normalized = os.path.normcase(str(Path(path).resolve()))
@@ -189,9 +189,13 @@ class PluginCenter(QWidget):
             running = sum(source["status"]["state"] == "running" for source in sources)
             faulted = any(source["status"]["state"] == "faulted" for source in sources)
             exists = Path(card.definition["path"]).is_file()
-            card.status.setText("文件缺失" if not exists else "故障" if faulted else f"运行中 · {running} 个源" if running else "已停用" if sources else "未启动")
+            disabled = key in disabled_plugins
+            card.status.setText("文件缺失" if not exists else "故障" if faulted else
+                f"{'正在停用' if disabled else '采集中'} · {running} 个源" if running else
+                "已停用" if disabled else "已启用 · 待开始" if sources else "未启用")
             card.status.setStyleSheet("background:#fff0e6;color:#b15c2c;" if faulted or not exists else "")
-            card.runtime.setText("；".join(f"{source['id']} · 已记录 {source['recorded']} 帧" for source in sources) or "点击启动后进入监测工作台。")
+            card.runtime.setText("；".join(f"{source['id']} · 已记录 {source['recorded']} 帧" for source in sources) or
+                "启用插件后就绪，由顶部“开始采集”按钮开始采集。")
             available = exists and not busy and not closing and (not active or ready)
-            card.start_button.setEnabled(available and not running)
-            card.stop_button.setEnabled(available and bool(sources) and (running > 0 or faulted))
+            card.start_button.setEnabled(available and (not sources or disabled))
+            card.stop_button.setEnabled(available and bool(sources) and not disabled)

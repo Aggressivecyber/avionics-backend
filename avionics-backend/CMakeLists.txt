@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(avionics_backend VERSION 0.4.1 LANGUAGES C CXX)
+project(avionics_backend VERSION 0.4.2 LANGUAGES C CXX)
 
 set(AVIONICS_BUILD_REVISION "" CACHE STRING "Commit identity when building a source export without Git")
 if(NOT AVIONICS_BUILD_REVISION)

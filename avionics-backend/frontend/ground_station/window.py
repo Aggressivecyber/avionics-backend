@@ -167,7 +167,8 @@ class MainWindow(QMainWindow):
         self.samples = deque(maxlen=512)
         self.source_configs = {}
         self.latest_snapshot = {"sources": []}
-        self.pending_plugin_starts = []
+        self.pending_plugin_sources = []
+        self.disabled_plugins = set()
         self.plugin_action_pending = False
         self.archive = None
         self.demo_pending = False
@@ -189,7 +190,7 @@ class MainWindow(QMainWindow):
         self.offline_stdout = bytearray()
         self.offline_stderr = bytearray()
         self.offline_summary = None
-        self.setWindowTitle("AEROBUS v0.4.1 · 插件与数据关联工作台")
+        self.setWindowTitle("AEROBUS v0.4.2 · 插件与数据关联工作台")
         self.resize(1440, 920)
         self.setMinimumSize(1160, 780)
         self.setStyleSheet(STYLE)
@@ -245,11 +246,12 @@ class MainWindow(QMainWindow):
         self.config_path = QLineEdit(str(configuration))
         self.config_path.setReadOnly(True)
         self.config_button = button("字典 / 规则", self.browse_configuration)
-        self.new_button = button("新建会话", self.new_session, True)
+        self.new_button = button("新建会话", self.new_session)
+        self.capture_button = button("开始采集", self.start_capture, True)
         self.end_button = button("结束并封存", self.end_session)
         session_row.addWidget(self.session_name)
         session_row.addWidget(self.config_path, 1)
-        for widget in (self.config_button, self.new_button, self.end_button):
+        for widget in (self.config_button, self.new_button, self.capture_button, self.end_button):
             session_row.addWidget(widget)
         session.addLayout(session_row)
         path_row = QHBoxLayout()
@@ -271,7 +273,7 @@ class MainWindow(QMainWindow):
         self.relations_page = RelationsPage(self.event_model, self.data_dir / "relations.json")
         self.pages.addWidget(self.relations_page)
         body_layout.addWidget(self.pages, 1)
-        self.message = label("就绪 · 在插件中心选择插件，点击启动后进入监测工作台。", "muted")
+        self.message = label("就绪 · 先启用插件，再点击顶部“开始采集”。", "muted")
         self.message.setWordWrap(True)
         body_layout.addWidget(self.message)
         layout.addWidget(body, 1)
@@ -471,6 +473,7 @@ class MainWindow(QMainWindow):
             self.event_model.clear()
             self.samples.clear()
             self.source_configs.clear()
+            self.disabled_plugins.clear()
             self.latest_snapshot = {"sources": []}
             self.relations_page.reset_session()
             self.trend_selector.clear()
@@ -490,7 +493,7 @@ class MainWindow(QMainWindow):
             self.navigate(0)
         except (OSError, ValueError) as error:
             self.demo_pending = False
-            self.pending_plugin_starts.clear()
+            self.pending_plugin_sources.clear()
             self.plugin_action_pending = False
             self.on_error(str(error))
 
@@ -501,7 +504,26 @@ class MainWindow(QMainWindow):
 
     def refresh_plugins(self):
         self.plugin_center.refresh(self.source_configs, self.latest_snapshot, self.client.active,
-            self.client.is_ready, self.busy or self.plugin_action_pending, self.client.closing and self.client.active)
+            self.client.is_ready, self.busy or self.plugin_action_pending, self.client.closing and self.client.active,
+            self.disabled_plugins)
+        ready = any(source["status"]["state"] in {"configured", "stopped"}
+                    for key, sources in self.plugin_center.sources_by_plugin.items()
+                    if key not in self.disabled_plugins for source in sources)
+        self.capture_button.setEnabled(ready and self.client.is_ready and not self.busy
+                                       and not self.plugin_action_pending and not self.client.closing)
+        self.capture_button.setToolTip("开始已启用且就绪的采集源。" if ready else
+            "请先启用插件或添加采集源；正在采集或已停用的来源不会重复启动。")
+
+    def start_capture(self):
+        self.plugin_action_pending = True
+        for key, sources in self.plugin_center.sources_by_plugin.items():
+            if key not in self.disabled_plugins:
+                for source in sources:
+                    if source["status"]["state"] in {"configured", "stopped"}:
+                        self.client.send("start", source["id"])
+        self.message.setText("正在开始采集…")
+        self.navigate(0)
+        self.refresh_plugins()
 
     def queue_demo_sources(self):
         definition = self.plugin_center.cards["demo"].definition
@@ -511,13 +533,10 @@ class MainWindow(QMainWindow):
             source = preset["source"]
             if source in self.source_configs and os.path.normcase(str(Path(self.source_configs[source][1]).resolve())) != normalized:
                 raise ValueError("演示来源 ID 已被其他插件使用：" + source)
-        states = {source["id"]: source["status"]["state"] for source in self.latest_snapshot["sources"]}
         for preset in definition["presets"]:
             source = preset["source"]
             if source not in self.source_configs:
                 self.client.send("add", source, plugin, preset["config"])
-            if states.get(source) != "running":
-                self.client.send("start", source)
 
     def start_plugin(self, definition):
         try:
@@ -532,10 +551,7 @@ class MainWindow(QMainWindow):
             else:
                 existing = self.plugin_center.sources_by_plugin[definition["id"]]
                 if self.client.active and existing:
-                    self.plugin_action_pending = True
-                    for source in existing:
-                        if source["status"]["state"] != "running":
-                            self.client.send("start", source["id"])
+                    self.disabled_plugins.discard(definition["id"])
                 else:
                     if definition["mode"] == "replay":
                         dialog = ReplaySetupDialog(self.data_dir, self)
@@ -544,7 +560,7 @@ class MainWindow(QMainWindow):
                         args = (dialog.source.text(), definition["path"], f"path={dialog.archive.text()};speed={dialog.speed.value()}")
                     else:
                         dialog = SourceDialog(self.bin_dir, parent=self)
-                        dialog.setWindowTitle("启动插件 · " + definition["name"])
+                        dialog.setWindowTitle("启用插件 · " + definition["name"])
                         dialog.plugin.setText(definition["path"])
                         dialog.plugin.setReadOnly(True)
                         dialog.plugin_browse.setEnabled(False)
@@ -553,12 +569,13 @@ class MainWindow(QMainWindow):
                         args = dialog.values()
                     self.plugin_action_pending = True
                     if not self.client.active:
-                        self.pending_plugin_starts.append(args)
+                        self.pending_plugin_sources.append(args)
                         self.new_session()
                     else:
                         self.client.send("add", *args)
-                        self.client.send("start", args[0])
             if self.client.active:
+                self.disabled_plugins.discard(definition["id"])
+                self.message.setText("正在准备：" + definition["name"] + "。就绪后请点击顶部“开始采集”。")
                 self.navigate(0)
             self.refresh_plugins()
         except ValueError as error:
@@ -568,6 +585,7 @@ class MainWindow(QMainWindow):
 
     def stop_plugin(self, definition):
         self.plugin_action_pending = True
+        self.disabled_plugins.add(definition["id"])
         for source in self.plugin_center.sources_by_plugin[definition["id"]]:
             if source["status"]["state"] != "stopped":
                 self.client.send("stop", source["id"])
@@ -577,17 +595,16 @@ class MainWindow(QMainWindow):
     def on_ready(self, message):
         self.log_message("会话已创建：" + message["archive"])
         self.log_message(f"后端版本 {message['build']['version']} · {message['build']['revision']}")
-        self.message.setText("记录中：" + message["archive"])
+        self.message.setText("会话已就绪；请点击“开始采集”。归档：" + message["archive"])
         if self.demo_pending:
             self.demo_pending = False
             self.queue_demo_sources()
-            self.badge.setText("合成演示 · 正在采集")
+            self.badge.setText("合成演示 · 等待开始采集")
         else:
             self.badge.setText("会话已就绪 · 等待采集源")
-        for source, plugin, config in self.pending_plugin_starts:
+        for source, plugin, config in self.pending_plugin_sources:
             self.client.send("add", source, plugin, config)
-            self.client.send("start", source)
-        self.pending_plugin_starts.clear()
+        self.pending_plugin_sources.clear()
         self.on_busy(self.busy)
 
     def end_session(self):
@@ -689,7 +706,8 @@ class MainWindow(QMainWindow):
             self.badge.setText("采集降级 · 请查看源状态及日志")
         else:
             running = sum(source["status"]["state"] == "running" for source in snapshot["sources"])
-            self.badge.setText(f"{'合成演示' if self.session_is_demo else '正在记录'} · {running} 个源运行中")
+            self.badge.setText(f"{'合成演示' if self.session_is_demo else '正在记录'} · {running} 个源运行中" if running else
+                              f"{'合成演示' if self.session_is_demo else '会话已就绪'} · 等待开始采集")
         degraded = not snapshot["healthy"] or not snapshot["analysis_healthy"] or snapshot["capture_degraded"]
         self.badge.setStyleSheet("background:#fff0e6;color:#b15c2c;" if degraded else "")
         self.refresh_plugins()
@@ -753,6 +771,9 @@ class MainWindow(QMainWindow):
         selected = self.selected_source()
         for widget in (self.start_button, self.stop_button, self.replace_button, self.remove_button):
             widget.setEnabled(enabled and selected is not None)
+        if any(key in self.disabled_plugins and any(source["id"] == selected for source in sources)
+               for key, sources in self.plugin_center.sources_by_plugin.items()):
+            self.start_button.setEnabled(False)
         if selected:
             source = json.loads(self.sources.item(self.sources.currentRow(), 0).toolTip())
             status = source["status"]

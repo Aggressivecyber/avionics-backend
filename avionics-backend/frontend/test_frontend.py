@@ -95,6 +95,8 @@ class FrontendIntegration(unittest.TestCase):
     def test_01_live_roundtrip_and_offline(self):
         window = self.window
         QTest.mouseClick(window.plugin_center.cards["demo"].start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.capture_button.isEnabled())
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
         # Rule events depend on real cross-process timing and the configured 5 ms rule window.
         wait_until(lambda: window.parameter_model.rowCount() == 4)
         QTest.qWait(550)
@@ -210,6 +212,8 @@ class FrontendIntegration(unittest.TestCase):
         self.assertIn("源 ID", dialog.error.text())
         dialog.reject()
         self.window.start_demo()
+        wait_until(lambda: self.window.capture_button.isEnabled())
+        QTest.mouseClick(self.window.capture_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: self.window.parameter_model.rowCount() == 4)
         self.window.close()
         wait_until(lambda: not self.window.client.active)
@@ -227,6 +231,8 @@ class FrontendIntegration(unittest.TestCase):
     def test_04_backend_crash_is_not_a_sealed_session(self):
         window = self.window
         window.start_demo()
+        wait_until(lambda: window.capture_button.isEnabled())
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.parameter_model.rowCount() == 4)
         window.client.process.kill()
         wait_until(lambda: not window.client.active)
@@ -245,6 +251,11 @@ class FrontendIntegration(unittest.TestCase):
         window = self.window
         self.assertEqual(window.pages.currentIndex(), 2)
         self.assertFalse(hasattr(window, "demo_button"))
+        for page_index in range(4):
+            window.navigate(page_index)
+            self.assertTrue(window.capture_button.isVisible())
+            self.assertFalse(window.capture_button.isEnabled())
+        window.navigate(2)
         self.assertFalse(any("关联" in window.monitor_tabs.tabText(i) for i in range(window.monitor_tabs.count())))
         self.assertTrue(window.grab().save(str(args.output / "plugins.png")))
         demo = window.plugin_center.cards["demo"]
@@ -254,6 +265,7 @@ class FrontendIntegration(unittest.TestCase):
             self.assertIsInstance(dialog, PluginDetailsDialog)
             self.assertIn("功能", dialog.text.toPlainText())
             self.assertIn("数据关联", dialog.text.toPlainText())
+            self.assertIn("开始采集", dialog.text.toPlainText())
             self.assertTrue(dialog.grab().save(str(args.output / "plugin-details.png")))
             inspected.append(True)
             dialog.accept()
@@ -261,8 +273,21 @@ class FrontendIntegration(unittest.TestCase):
         QTest.mouseClick(demo.details_button, Qt.MouseButton.LeftButton)
         self.assertTrue(inspected)
         QTest.mouseClick(demo.start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.sources.rowCount() == 4 and window.capture_button.isEnabled())
+        self.assertEqual(window.pages.currentIndex(), 0)
+        QTest.qWait(600)
+        self.assertEqual(window.latest_snapshot["recorded"], 0)
+        self.assertEqual(window.latest_snapshot["samples"], 0)
+        self.assertEqual(window.parameter_model.rowCount(), 0)
+        self.assertTrue(all(source["status"]["state"] == "configured" for source in window.latest_snapshot["sources"]))
+        self.assertIn("待开始", demo.status.text())
+        window.navigate(2)
+        QTest.qWait(30)
+        self.assertTrue(window.grab().save(str(args.output / "plugins-ready.png")))
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.parameter_model.rowCount() == 4)
         self.assertEqual(window.pages.currentIndex(), 0)
+        wait_until(lambda: not window.capture_button.isEnabled())
         page = window.relations_page
         QTest.mouseClick(window.relations_nav, Qt.MouseButton.LeftButton)
         QTest.qWait(30)
@@ -317,7 +342,20 @@ class FrontendIntegration(unittest.TestCase):
         before = next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"]
         wait_until(lambda: next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"] > before)
         self.assertIn("已停用", demo.status.text())
+        self.assertTrue(window.capture_button.isVisible())
+        self.assertFalse(window.capture_button.isEnabled())
+        # Starting another ready source must not restart the disabled demo plugin.
+        window.client.send("add", "independent_ready", str(separate), "period_ms=5")
+        wait_until(lambda: self.source_state("independent_ready") == "已配置" and window.capture_button.isEnabled())
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("independent_ready") == "运行中")
+        self.assertTrue(all(self.source_state(source) == "已停止" for source in ("sensor_a", "sensor_b", "control", "feedback")))
+        window.navigate(2)
         QTest.mouseClick(demo.start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.capture_button.isEnabled())
+        QTest.qWait(400)
+        self.assertTrue(all(self.source_state(source) == "已停止" for source in ("sensor_a", "sensor_b", "control", "feedback")))
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: self.source_state("sensor_a") == "运行中")
         QTest.mouseClick(window.end_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: not window.client.active)
@@ -332,6 +370,11 @@ class FrontendIntegration(unittest.TestCase):
             dialog.validate()
         QTimer.singleShot(80, configure_replay)
         QTest.mouseClick(window.plugin_center.cards["replay"].start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("replay") == "已配置" and window.capture_button.isEnabled())
+        QTest.qWait(400)
+        self.assertEqual(window.latest_snapshot["recorded"], 0)
+        self.assertEqual(window.parameter_model.rowCount(), 0)
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: self.source_state("replay") == "运行中")
         wait_until(lambda: window.latest_snapshot["recorded"] > 0)
         self.assertEqual(window.pages.currentIndex(), 0)
@@ -346,6 +389,9 @@ class FrontendIntegration(unittest.TestCase):
         reopened.close()
         receipt["checks"].append({"name": self._testMethodName, "status": "passed",
                                    "plugin_details_verified": True, "named_relations": 3,
+                                   "enable_without_acquisition_verified": True,
+                                   "capture_button_visible_on_all_pages": True,
+                                   "disabled_plugin_excluded_from_start": True,
                                    "stopping_demo_preserved_other_plugin": True,
                                    "replay_started_from_card": True, "definitions_reopened": True})
 
