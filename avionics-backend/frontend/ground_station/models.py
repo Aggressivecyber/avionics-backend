@@ -2,7 +2,7 @@ from collections import deque
 import json
 import math
 
-from PySide6.QtCore import QAbstractTableModel, QLineF, QModelIndex, QRectF, Qt
+from PySide6.QtCore import QAbstractTableModel, QLineF, QModelIndex, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -127,6 +127,8 @@ class TrendPlot(QWidget):
         self.epoch = None
         self.points = deque(maxlen=512)
         self.unit = ""
+        self.time_origin = None
+        self.boolean_axis = False
 
     def select(self, key, samples):
         self.key = key
@@ -169,22 +171,28 @@ class TrendPlot(QWidget):
         padding = max((high - low) * .12, abs(high) * .002, .001)
         low -= padding
         high += padding
+        if self.boolean_axis:
+            low, high = 0.0, 1.0
         painter.setPen(QColor("#738197"))
         for i in range(5):
             value = high - (high - low) * i / 4
+            axis_label = ("true / 1" if i == 0 else "false / 0" if i == 4 else "") if self.boolean_axis else f"{value:.4g}"
             painter.drawText(QRectF(2, area.top() + area.height() * i / 4 - 9, 58, 20),
-                             Qt.AlignmentFlag.AlignRight, f"{value:.4g}")
-        duration = (x1 - x0) / 1e9
+                             Qt.AlignmentFlag.AlignRight, axis_label)
+        time_origin = x0 if self.time_origin is None else self.time_origin
+        begin_time, end_time = (x0 - time_origin) / 1e9, (x1 - time_origin) / 1e9
         painter.drawText(QRectF(area.left(), area.bottom() + 10, area.width(), 20),
-                         Qt.AlignmentFlag.AlignLeft, f"0 s     →     {duration:.3f} s    ·    {self.unit}")
+                         Qt.AlignmentFlag.AlignLeft, f"{begin_time:.3f} s     →     {end_time:.3f} s    ·    {self.unit}")
         path = QPainterPath()
         connected = False
+        markers = []
         for point in self.points:
             if point is None:
                 connected = False
                 continue
             x = area.left() + (point[0] - x0) / max(x1 - x0, 1) * area.width()
             y = area.bottom() - (point[1] - low) / (high - low) * area.height()
+            markers.append(QPointF(x, y))
             if connected:
                 path.lineTo(x, y)
             else:
@@ -192,3 +200,7 @@ class TrendPlot(QWidget):
             connected = True
         painter.setPen(QPen(QColor("#168fbd"), 2.2))
         painter.drawPath(path)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#168fbd"))
+        for marker in markers:
+            painter.drawEllipse(marker, 1.8, 1.8)

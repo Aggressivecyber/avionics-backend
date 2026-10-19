@@ -1,0 +1,33 @@
+[
+  {
+    "id": "demo",
+    "name": "合成演示插件",
+    "library": "bus_simulated",
+    "category": "内置 · 模拟数据",
+    "summary": "生成两路温度与一组指令/反馈数据，体验完整监测和数据关联流程。",
+    "description": "启动后自动创建演示会话，打开监测工作台，并启动 sensor_a、sensor_b、control、feedback 四个模拟来源。数据由软件生成，可用于熟悉操作、测试参数字典和构建自定义关系。",
+    "functions": ["产生可重复的模拟原始报文与时间戳", "实时显示温度、指令和反馈参数", "为数据关联页面提供可选择的参数序列", "停用时停止本插件的采集来源，保留当前会话与已记录数据"],
+    "parameters": "period_ms：目标采样间隔，毫秒\ninitial_milli：起始整数\nstep_milli：每帧增量\n演示使用内置的四路配置，启动时自动选择配套字典。",
+    "notes": "演示数据来自软件模拟。内置规则会比较两路温度，以及配对指令与反馈；还可在数据关联页面自行定义 A-B、A/B、A+B>C 等公式。",
+    "mode": "demo",
+    "presets": [
+      {"source": "sensor_a", "config": "period_ms=20;initial_milli=20000;step_milli=10"},
+      {"source": "sensor_b", "config": "period_ms=20;initial_milli=20100;step_milli=10"},
+      {"source": "control", "config": "period_ms=20;initial_milli=0;step_milli=100"},
+      {"source": "feedback", "config": "period_ms=20;initial_milli=0;step_milli=100"}
+    ]
+  },
+  {
+    "id": "replay",
+    "name": "归档回放插件",
+    "library": "bus_replay",
+    "category": "内置 · 历史数据",
+    "summary": "将已保存的原始总线归档重新送入采集链路，用于复现与调试。",
+    "description": "读取 .avbus 原始归档，按照指定速度重新提交其中的报文。回放保留原始来源、记录位置、采集时间和会话身份，新的会话记录本次回放过程。",
+    "functions": ["从已封存的 .avbus 归档读取原始报文", "支持原速、整数倍速与尽快回放", "保留原始记录的来源和证据身份", "可单独启停回放来源，与其他插件的采集来源分别管理"],
+    "parameters": "path：原始归档路径\nspeed=1：原速\nspeed=10：十倍速\nspeed=0：尽快回放\n逻辑源 ID：本次回放在会话中的名称。",
+    "notes": "回放后的参数分析需要匹配来源及录制时钟的字典配置。直接重新分析历史归档时，也可以使用离线分析页面。",
+    "mode": "replay",
+    "presets": []
+  }
+]

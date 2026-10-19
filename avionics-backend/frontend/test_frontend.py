@@ -20,6 +20,7 @@ from PySide6.QtWidgets import QApplication
 
 from ground_station.backend import BackendClient, writable_data_path
 from ground_station.window import MainWindow, SourceDialog
+from ground_station.plugin_center import PluginDetailsDialog, ReplaySetupDialog
 
 
 parser = argparse.ArgumentParser()
@@ -93,8 +94,9 @@ class FrontendIntegration(unittest.TestCase):
 
     def test_01_live_roundtrip_and_offline(self):
         window = self.window
-        QTest.mouseClick(window.demo_button, Qt.MouseButton.LeftButton)
-        wait_until(lambda: window.parameter_model.rowCount() == 4 and window.event_model.rowCount() > 0)
+        QTest.mouseClick(window.plugin_center.cards["demo"].start_button, Qt.MouseButton.LeftButton)
+        # Rule events depend on real cross-process timing and the configured 5 ms rule window.
+        wait_until(lambda: window.parameter_model.rowCount() == 4)
         QTest.qWait(550)
         self.assertEqual(window.sources.rowCount(), 4)
         self.assertGreater(len(window.plot.points), 5)
@@ -239,11 +241,120 @@ class FrontendIntegration(unittest.TestCase):
         receipt["checks"].append({"name": self._testMethodName, "status": "passed",
                                    "unsealed_archive": str(window.archive)})
 
+    def test_05_plugin_cards_and_named_relationships(self):
+        window = self.window
+        self.assertEqual(window.pages.currentIndex(), 2)
+        self.assertFalse(hasattr(window, "demo_button"))
+        self.assertFalse(any("关联" in window.monitor_tabs.tabText(i) for i in range(window.monitor_tabs.count())))
+        self.assertTrue(window.grab().save(str(args.output / "plugins.png")))
+        demo = window.plugin_center.cards["demo"]
+        inspected = []
+        def inspect_details():
+            dialog = QApplication.activeModalWidget()
+            self.assertIsInstance(dialog, PluginDetailsDialog)
+            self.assertIn("功能", dialog.text.toPlainText())
+            self.assertIn("数据关联", dialog.text.toPlainText())
+            self.assertTrue(dialog.grab().save(str(args.output / "plugin-details.png")))
+            inspected.append(True)
+            dialog.accept()
+        QTimer.singleShot(80, inspect_details)
+        QTest.mouseClick(demo.details_button, Qt.MouseButton.LeftButton)
+        self.assertTrue(inspected)
+        QTest.mouseClick(demo.start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.parameter_model.rowCount() == 4)
+        self.assertEqual(window.pages.currentIndex(), 0)
+        page = window.relations_page
+        QTest.mouseClick(window.relations_nav, Qt.MouseButton.LeftButton)
+        QTest.qWait(30)
+        for index, sample in enumerate(page.input_model.rows):
+            if sample["source"] in {"sensor_a", "sensor_b"}:
+                page.input_model.setData(page.input_model.index(index, 0), Qt.CheckState.Checked.value,
+                                         Qt.ItemDataRole.CheckStateRole)
+        page.name.setText("双路温差")
+        page.formula.setText("A-B")
+        page.unit.setText("degC")
+        page.window_ms.setValue(50)
+        QTest.mouseClick(page.create_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(len(page.engine.relations), 1, page.feedback.text())
+        wait_until(lambda: page.engine.relations and page.engine.relations[0].origin_ns is not None)
+        first = page.engine.relations[0]
+        wait_until(lambda: len(first.history) > 5)
+        self.assertEqual(first.expression.names, {"A", "B"})
+        self.assertEqual(len(first.evidence), 2)
+        page.name.setText("温差条件")
+        page.formula.setText("abs(A-B)<=0.25")
+        page.unit.clear()
+        QTest.mouseClick(page.create_button, Qt.MouseButton.LeftButton)
+        condition = page.engine.relations[1]
+        wait_until(lambda: condition.origin_ns is not None)
+        self.assertIsInstance(condition.value, (bool, type(None)))
+        for index, sample in enumerate(page.input_model.rows):
+            if sample["source"] == "control":
+                page.input_model.setData(page.input_model.index(index, 0), Qt.CheckState.Checked.value,
+                                         Qt.ItemDataRole.CheckStateRole)
+        page.name.setText("三路组合")
+        page.formula.setText("A+B>C")
+        QTest.mouseClick(page.create_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(len(page.engine.relations[2].bindings), 3)
+        QTest.mouseClick(window.relations_nav, Qt.MouseButton.LeftButton)
+        self.assertEqual(window.pages.currentIndex(), 3)
+        self.assertEqual(page.relationships.rowCount(), 3)
+        page.relationships.selectRow(0)
+        self.assertGreater(len(page.plot.points), 0)
+        self.assertTrue(window.grab().save(str(args.output / "relations.png")))
+        self.assertTrue((self.data_dir / "relations.json").exists())
+        # A separate plugin copy keeps collecting when the demo module is disabled.
+        separate = self.data_dir / ("独立采集插件" + plugin_suffix)
+        shutil.copyfile(args.bin_dir / ("bus_simulated" + plugin_suffix), separate)
+        window.client.send("add", "independent", str(separate), "period_ms=5")
+        window.client.send("start", "independent")
+        wait_until(lambda: self.source_state("independent") == "运行中")
+        wait_until(lambda: demo.stop_button.isEnabled())
+        QTest.mouseClick(demo.stop_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: all(self.source_state(source) == "已停止" for source in ("sensor_a", "sensor_b", "control", "feedback")))
+        self.assertTrue(window.client.active)
+        self.assertEqual(self.source_state("independent"), "运行中")
+        before = next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"]
+        wait_until(lambda: next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"] > before)
+        self.assertIn("已停用", demo.status.text())
+        QTest.mouseClick(demo.start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("sensor_a") == "运行中")
+        QTest.mouseClick(window.end_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: not window.client.active)
+        self.assertEqual(window.last_metadata["capture_status"], "complete")
+        archive = window.archive
+        window.navigate(2)
+        def configure_replay():
+            dialog = QApplication.activeModalWidget()
+            self.assertIsInstance(dialog, ReplaySetupDialog)
+            dialog.archive.setText(str(archive))
+            dialog.speed.setValue(1)
+            dialog.validate()
+        QTimer.singleShot(80, configure_replay)
+        QTest.mouseClick(window.plugin_center.cards["replay"].start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("replay") == "运行中")
+        wait_until(lambda: window.latest_snapshot["recorded"] > 0)
+        self.assertEqual(window.pages.currentIndex(), 0)
+        replay = window.plugin_center.cards["replay"]
+        wait_until(lambda: replay.stop_button.isEnabled())
+        QTest.mouseClick(replay.stop_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("replay") == "已停止")
+        window.end_session()
+        wait_until(lambda: not window.client.active)
+        reopened = MainWindow(args.bin_dir, self.data_dir, self.configuration)
+        self.assertEqual([r.name for r in reopened.relations_page.engine.relations], ["双路温差", "温差条件", "三路组合"])
+        reopened.close()
+        receipt["checks"].append({"name": self._testMethodName, "status": "passed",
+                                   "plugin_details_verified": True, "named_relations": 3,
+                                   "stopping_demo_preserved_other_plugin": True,
+                                   "replay_started_from_card": True, "definitions_reopened": True})
+
 
 if __name__ == "__main__":
     from PySide6.QtCore import qVersion
     receipt["qt_version"] = qVersion()
-    suite = unittest.defaultTestLoader.loadTestsFromTestCase(FrontendIntegration)
+    suite = (unittest.defaultTestLoader.loadTestsFromNames(remaining, sys.modules[__name__]) if remaining
+             else unittest.defaultTestLoader.loadTestsFromTestCase(FrontendIntegration))
     result = unittest.TextTestRunner(verbosity=2).run(suite)
     receipt["success"] = result.wasSuccessful() and not qt_errors
     receipt["qt_callback_errors"] = qt_errors

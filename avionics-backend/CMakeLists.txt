@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(avionics_backend VERSION 0.4.0 LANGUAGES C CXX)
+project(avionics_backend VERSION 0.4.1 LANGUAGES C CXX)
 
 set(AVIONICS_BUILD_REVISION "" CACHE STRING "Commit identity when building a source export without Git")
 if(NOT AVIONICS_BUILD_REVISION)
@@ -125,5 +125,8 @@ if(BUILD_TESTING)
             --output "${CMAKE_BINARY_DIR}/frontend-test-output")
         set_tests_properties(qt_frontend PROPERTIES TIMEOUT 60
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME qt_relations COMMAND "${Python3_EXECUTABLE}" -B
+            "${PROJECT_SOURCE_DIR}/frontend/test_relations.py")
+        set_tests_properties(qt_relations PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
     endif()
 endif()

@@ -23,6 +23,8 @@ def main():
     from .window import MainWindow
     app = QApplication(sys.argv[:1])
     app.setApplicationName("AEROBUS Ground Station")
+    from . import __version__
+    app.setApplicationVersion(__version__)
     app.setStyle("Fusion")
     window = MainWindow(args.bin_dir.resolve(), data_dir, args.config.resolve())
     window.show()

@@ -56,9 +56,10 @@ def main():
     files = {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(output.rglob("*")) if path.is_file()}
     manifest = {"build": version, "platform": "windows-x64-mingw", "acceptance_scope": "software-architecture-baseline",
-                "desktop": {"toolkit": "Qt Widgets", "binding": "PySide6", "tested_version": "6.9.2",
+                "desktop": {"version": version["version"], "toolkit": "Qt Widgets", "binding": "PySide6", "tested_version": "6.9.2",
                             "python_qt_runtime": "external", "launcher": "Start-AEROBUS.cmd",
-                            "control_schema": 1},
+                            "control_schema": 1, "plugin_catalog": "frontend/ground_station/plugins.json",
+                            "relation_configuration_schema": 1},
                 "hardware_acceptance": "pending-selected-bus-sdk-and-workload", "files": files}
     (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     files["manifest.json"] = hashlib.sha256((output / "manifest.json").read_bytes()).hexdigest()

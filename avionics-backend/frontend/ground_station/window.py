@@ -19,11 +19,14 @@ from PySide6.QtWidgets import (
 
 from .backend import BackendClient, read_jsonl_tail, writable_data_path
 from .models import EventModel, ParameterModel, TrendPlot
+from .plugin_center import PluginCenter, ReplaySetupDialog
+from .relations_page import RelationsPage
 
 
 STYLE = """
 QWidget { font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 12px; color: #24344b; }
 QMainWindow { background: #f0f4f8; }
+QWidget#pluginGrid { background: #f0f4f8; }
 QFrame#rail { background: #12233c; border: none; }
 QFrame#rail QLabel { color: #9cb0cb; background: transparent; }
 QFrame#rail QLabel#brand { color: #ffffff; font-size: 21px; font-weight: 700; }
@@ -108,7 +111,8 @@ class SourceDialog(QDialog):
         self.config = QLineEdit(values[2] if values else "period_ms=20;initial_milli=20000;step_milli=10")
         row = QHBoxLayout()
         row.addWidget(self.plugin)
-        row.addWidget(button("浏览", self.browse))
+        self.plugin_browse = button("浏览", self.browse)
+        row.addWidget(self.plugin_browse)
         form.addRow("逻辑源 ID", self.source)
         form.addRow("插件文件", row)
         form.addRow("插件配置", self.config)
@@ -144,6 +148,11 @@ class MainWindow(QMainWindow):
     def __init__(self, bin_dir: Path, data_dir: Path, configuration: Path):
         super().__init__()
         self.bin_dir = bin_dir
+        self.demo_configuration = Path(__file__).resolve().parents[2] / "config" / "desktop-demo.ini"
+        self.plugin_definitions = json.loads(Path(__file__).with_name("plugins.json").read_text(encoding="utf-8"))
+        suffix = ".dll" if os.name == "nt" else ".so"
+        for definition in self.plugin_definitions:
+            definition["path"] = str(bin_dir / (definition["library"] + suffix))
         self.data_dir = writable_data_path(str(data_dir))
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.client = BackendClient(bin_dir, self)
@@ -157,6 +166,9 @@ class MainWindow(QMainWindow):
         self.client.exited.connect(self.on_exit)
         self.samples = deque(maxlen=512)
         self.source_configs = {}
+        self.latest_snapshot = {"sources": []}
+        self.pending_plugin_starts = []
+        self.plugin_action_pending = False
         self.archive = None
         self.demo_pending = False
         self.session_is_demo = False
@@ -177,7 +189,7 @@ class MainWindow(QMainWindow):
         self.offline_stdout = bytearray()
         self.offline_stderr = bytearray()
         self.offline_summary = None
-        self.setWindowTitle("AEROBUS · 地面试验与总线分析")
+        self.setWindowTitle("AEROBUS v0.4.1 · 插件与数据关联工作台")
         self.resize(1440, 920)
         self.setMinimumSize(1160, 780)
         self.setStyleSheet(STYLE)
@@ -203,7 +215,9 @@ class MainWindow(QMainWindow):
         navigation.addSpacing(37)
         self.monitor_nav = button("监测工作台", lambda: self.navigate(0))
         self.offline_nav = button("离线分析", lambda: self.navigate(1))
-        for nav in (self.monitor_nav, self.offline_nav):
+        self.plugins_nav = button("插件中心", lambda: self.navigate(2))
+        self.relations_nav = button("数据关联", lambda: self.navigate(3))
+        for nav in (self.plugins_nav, self.monitor_nav, self.relations_nav, self.offline_nav):
             nav.setCheckable(True)
             navigation.addWidget(nav)
         navigation.addStretch()
@@ -216,7 +230,8 @@ class MainWindow(QMainWindow):
         body_layout.setSpacing(14)
         top = QHBoxLayout()
         titles = QVBoxLayout()
-        titles.addWidget(label("总线监测工作台", "heading"))
+        self.heading = label("插件中心", "heading")
+        titles.addWidget(self.heading)
         titles.addWidget(label("采集管理、参数监测与关联分析", "muted"))
         top.addLayout(titles)
         top.addStretch()
@@ -231,11 +246,10 @@ class MainWindow(QMainWindow):
         self.config_path.setReadOnly(True)
         self.config_button = button("字典 / 规则", self.browse_configuration)
         self.new_button = button("新建会话", self.new_session, True)
-        self.demo_button = button("启动合成演示", self.start_demo)
         self.end_button = button("结束并封存", self.end_session)
         session_row.addWidget(self.session_name)
         session_row.addWidget(self.config_path, 1)
-        for widget in (self.config_button, self.new_button, self.demo_button, self.end_button):
+        for widget in (self.config_button, self.new_button, self.end_button):
             session_row.addWidget(widget)
         session.addLayout(session_row)
         path_row = QHBoxLayout()
@@ -250,13 +264,19 @@ class MainWindow(QMainWindow):
         self.pages = QStackedWidget()
         self.pages.addWidget(self.build_monitor())
         self.pages.addWidget(self.build_offline(configuration))
+        self.plugin_center = PluginCenter(self.plugin_definitions)
+        self.plugin_center.start_requested.connect(self.start_plugin)
+        self.plugin_center.stop_requested.connect(self.stop_plugin)
+        self.pages.addWidget(self.plugin_center)
+        self.relations_page = RelationsPage(self.event_model, self.data_dir / "relations.json")
+        self.pages.addWidget(self.relations_page)
         body_layout.addWidget(self.pages, 1)
-        self.message = label("就绪 · 新建试验会话，或启动合成演示验证完整流程。", "muted")
+        self.message = label("就绪 · 在插件中心选择插件，点击启动后进入监测工作台。", "muted")
         self.message.setWordWrap(True)
         body_layout.addWidget(self.message)
         layout.addWidget(body, 1)
         self.setCentralWidget(root)
-        self.navigate(0)
+        self.navigate(2)
 
     def build_monitor(self):
         page = QWidget()
@@ -328,6 +348,7 @@ class MainWindow(QMainWindow):
         right.addWidget(trend_card)
         tabs_card, tabs_content = card()
         tabs = QTabWidget()
+        self.monitor_tabs = tabs
         self.parameter_model = ParameterModel(self)
         self.parameter_proxy = QSortFilterProxyModel(self)
         self.parameter_proxy.setSourceModel(self.parameter_model)
@@ -345,9 +366,6 @@ class MainWindow(QMainWindow):
         parameter_layout.addWidget(self.parameter_view)
         tabs.addTab(parameters, "实时参数")
         self.event_model = EventModel(self)
-        self.event_view = table_view(self.event_model)
-        self.event_view.doubleClicked.connect(lambda index: self.show_evidence(self.event_model.rows[index.row()]))
-        tabs.addTab(self.event_view, "关联事件 · 双击溯源")
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
         self.log.setMaximumBlockCount(300)
@@ -415,6 +433,9 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentIndex(index)
         self.monitor_nav.setChecked(index == 0)
         self.offline_nav.setChecked(index == 1)
+        self.plugins_nav.setChecked(index == 2)
+        self.relations_nav.setChecked(index == 3)
+        self.heading.setText(["总线监测工作台", "离线归档分析", "插件中心", "数据关联工作区"][index])
 
     def browse_configuration(self):
         path, _ = QFileDialog.getOpenFileName(self, "选择字典与规则", self.config_path.text(), "配置 (*.ini)")
@@ -426,6 +447,7 @@ class MainWindow(QMainWindow):
         if path:
             try:
                 self.data_dir = writable_data_path(path)
+                self.relations_page.definitions_path = self.data_dir / "relations.json"
                 self.storage_label.setText("数据目录：" + str(self.data_dir))
             except ValueError as error:
                 self.on_error(str(error))
@@ -449,6 +471,8 @@ class MainWindow(QMainWindow):
             self.event_model.clear()
             self.samples.clear()
             self.source_configs.clear()
+            self.latest_snapshot = {"sources": []}
+            self.relations_page.reset_session()
             self.trend_selector.clear()
             self.plot.select(None, [])
             self.sources.setRowCount(0)
@@ -466,11 +490,89 @@ class MainWindow(QMainWindow):
             self.navigate(0)
         except (OSError, ValueError) as error:
             self.demo_pending = False
+            self.pending_plugin_starts.clear()
+            self.plugin_action_pending = False
             self.on_error(str(error))
 
     def start_demo(self):
+        self.config_path.setText(str(self.demo_configuration))
         self.demo_pending = True
         self.new_session()
+
+    def refresh_plugins(self):
+        self.plugin_center.refresh(self.source_configs, self.latest_snapshot, self.client.active,
+            self.client.is_ready, self.busy or self.plugin_action_pending, self.client.closing and self.client.active)
+
+    def queue_demo_sources(self):
+        definition = self.plugin_center.cards["demo"].definition
+        plugin = definition["path"]
+        normalized = os.path.normcase(str(Path(plugin).resolve()))
+        for preset in definition["presets"]:
+            source = preset["source"]
+            if source in self.source_configs and os.path.normcase(str(Path(self.source_configs[source][1]).resolve())) != normalized:
+                raise ValueError("演示来源 ID 已被其他插件使用：" + source)
+        states = {source["id"]: source["status"]["state"] for source in self.latest_snapshot["sources"]}
+        for preset in definition["presets"]:
+            source = preset["source"]
+            if source not in self.source_configs:
+                self.client.send("add", source, plugin, preset["config"])
+            if states.get(source) != "running":
+                self.client.send("start", source)
+
+    def start_plugin(self, definition):
+        try:
+            if definition["mode"] == "demo":
+                if self.client.active and not self.session_is_demo:
+                    raise ValueError("请先结束当前试验会话，再启动使用配套字典的演示插件。")
+                self.plugin_action_pending = True
+                if self.client.active:
+                    self.queue_demo_sources()
+                else:
+                    self.start_demo()
+            else:
+                existing = self.plugin_center.sources_by_plugin[definition["id"]]
+                if self.client.active and existing:
+                    self.plugin_action_pending = True
+                    for source in existing:
+                        if source["status"]["state"] != "running":
+                            self.client.send("start", source["id"])
+                else:
+                    if definition["mode"] == "replay":
+                        dialog = ReplaySetupDialog(self.data_dir, self)
+                        if dialog.exec() != QDialog.DialogCode.Accepted:
+                            return
+                        args = (dialog.source.text(), definition["path"], f"path={dialog.archive.text()};speed={dialog.speed.value()}")
+                    else:
+                        dialog = SourceDialog(self.bin_dir, parent=self)
+                        dialog.setWindowTitle("启动插件 · " + definition["name"])
+                        dialog.plugin.setText(definition["path"])
+                        dialog.plugin.setReadOnly(True)
+                        dialog.plugin_browse.setEnabled(False)
+                        if dialog.exec() != QDialog.DialogCode.Accepted:
+                            return
+                        args = dialog.values()
+                    self.plugin_action_pending = True
+                    if not self.client.active:
+                        self.pending_plugin_starts.append(args)
+                        self.new_session()
+                    else:
+                        self.client.send("add", *args)
+                        self.client.send("start", args[0])
+            if self.client.active:
+                self.navigate(0)
+            self.refresh_plugins()
+        except ValueError as error:
+            self.plugin_action_pending = False
+            self.on_error(str(error))
+            self.refresh_plugins()
+
+    def stop_plugin(self, definition):
+        self.plugin_action_pending = True
+        for source in self.plugin_center.sources_by_plugin[definition["id"]]:
+            if source["status"]["state"] != "stopped":
+                self.client.send("stop", source["id"])
+        self.message.setText("正在停用：" + definition["name"] + "。已记录数据保留在当前会话中。")
+        self.refresh_plugins()
 
     def on_ready(self, message):
         self.log_message("会话已创建：" + message["archive"])
@@ -478,19 +580,14 @@ class MainWindow(QMainWindow):
         self.message.setText("记录中：" + message["archive"])
         if self.demo_pending:
             self.demo_pending = False
-            suffix = ".dll" if os.name == "nt" else ".so"
-            plugin = str(self.bin_dir / ("bus_simulated" + suffix))
-            for source, config in [
-                ("sensor_a", "period_ms=20;initial_milli=20000;step_milli=10"),
-                ("sensor_b", "period_ms=20;initial_milli=20100;step_milli=10"),
-                ("control", "period_ms=20;initial_milli=0;step_milli=100"),
-                ("feedback", "period_ms=20;initial_milli=0;step_milli=100"),
-            ]:
-                self.client.send("add", source, plugin, config)
-                self.client.send("start", source)
+            self.queue_demo_sources()
             self.badge.setText("合成演示 · 正在采集")
         else:
             self.badge.setText("会话已就绪 · 等待采集源")
+        for source, plugin, config in self.pending_plugin_starts:
+            self.client.send("add", source, plugin, config)
+            self.client.send("start", source)
+        self.pending_plugin_starts.clear()
         self.on_busy(self.busy)
 
     def end_session(self):
@@ -535,6 +632,9 @@ class MainWindow(QMainWindow):
             self.on_error(command + " 失败：" + payload)
 
     def on_snapshot(self, snapshot):
+        self.latest_snapshot = snapshot
+        if not self.client.queue:
+            self.plugin_action_pending = False
         now = time.monotonic()
         rate = 0
         if self.last_counts:
@@ -568,6 +668,7 @@ class MainWindow(QMainWindow):
         self.samples.extend(snapshot["parameters"])
         self.parameter_model.update_samples(snapshot["parameters"])
         self.event_model.append(snapshot["events"])
+        self.relations_page.feed(snapshot["parameters"], snapshot["display_samples_omitted"])
         self.plot.add(snapshot["parameters"])
         known = {self.trend_selector.itemData(i) for i in range(self.trend_selector.count())}
         for sample in self.parameter_model.rows:
@@ -591,6 +692,7 @@ class MainWindow(QMainWindow):
             self.badge.setText(f"{'合成演示' if self.session_is_demo else '正在记录'} · {running} 个源运行中")
         degraded = not snapshot["healthy"] or not snapshot["analysis_healthy"] or snapshot["capture_degraded"]
         self.badge.setStyleSheet("background:#fff0e6;color:#b15c2c;" if degraded else "")
+        self.refresh_plugins()
 
     def select_trend(self, index):
         self.plot.select(self.trend_selector.itemData(index) if index >= 0 else None, self.samples)
@@ -608,6 +710,8 @@ class MainWindow(QMainWindow):
         self.metric_notes[0].setText("原始记录已封存" if healthy else "原始记录发生故障")
         self.metric_notes[1].setText(f"有效 {metadata['usable']:,} · 质量拒绝 {metadata['quality_rejected']:,}")
         self.metric_notes[2].setText(f"最终分析游标 {metadata['analysis_cursor']:,}")
+        for row in range(self.sources.rowCount()):
+            self.sources.item(row, 1).setText("已停止")
         try:
             final_samples = read_jsonl_tail(Path(str(self.archive) + ".analysis") / "parameters.jsonl")
             final_events = read_jsonl_tail(Path(str(self.archive) + ".analysis") / "events.jsonl", 200)
@@ -617,6 +721,10 @@ class MainWindow(QMainWindow):
             self.samples.clear()
             self.samples.extend(final_samples)
             self.select_trend(self.trend_selector.currentIndex())
+            if metadata["analysis_status"] == "complete":
+                first_index = metadata["samples"] - len(final_samples)
+                unseen = [sample for index, sample in enumerate(final_samples, first_index + 1) if index > self.client.sample_cursor]
+                self.relations_page.feed(unseen)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             self.log_message("封存后的显示数据读取失败：" + str(error))
         self.message.setText(f"已结束：记录 {metadata['recorded']:,} 帧，拒绝 {metadata['dropped']:,} 帧；回执 {self.archive}.session.json")
@@ -626,14 +734,18 @@ class MainWindow(QMainWindow):
         self.offline_output.setText(str(self.data_dir / ("离线分析_" + uuid4().hex[:8])))
 
     def on_active(self, active):
-        for widget in (self.new_button, self.demo_button, self.config_button, self.storage_button, self.session_name):
+        if not active:
+            self.plugin_action_pending = False
+        for widget in (self.new_button, self.config_button, self.storage_button, self.session_name):
             widget.setEnabled(not active)
         self.end_button.setEnabled(active and not self.client.closing)
         self.update_source_actions()
+        self.refresh_plugins()
 
     def on_busy(self, busy):
         self.busy = busy
         self.update_source_actions()
+        self.refresh_plugins()
 
     def update_source_actions(self):
         enabled = self.client.active and self.client.is_ready and not self.client.closing and not self.busy
