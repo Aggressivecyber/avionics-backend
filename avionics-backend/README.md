@@ -1,10 +1,22 @@
-# 地面总线监测后端 · v0.3
+# 地面总线监测工作台 · v0.4
 
-面向地面试验、总线监测和数据分析的 C++20 软件基线。当前可运行模拟采集、回放、配置化参数解码、事件时间处理和关联分析。真实总线协议、采集卡 SDK、ICD、时钟同步与设备负载验收尚待选型。
+面向地面试验、总线监测和数据分析的 Qt 6 桌面前端与 C++20 后端。当前可运行模拟采集、回放、配置化参数解码、事件时间处理和关联分析。真实总线协议、采集卡 SDK、ICD、时钟同步与设备负载验收尚待选型。
 
 项目尚未上线，按用户要求仅保留插件 ABI 2、归档 2、配置 schema 2、结果 schema 2。旧插件统一重做，旧试验输入重新生成。当前版本、源码提交和格式版本可通过 `--version` 查询。
 
 [当前架构与图示](docs/architecture.md) · [升级验收计划](docs/upgrade-plan.md) · [验证记录](docs/upgrade-verification.md) · [设备与成品验收输入](docs/product-acceptance.md)
+
+## Qt 桌面前端
+
+前端采用 Qt Widgets / PySide6 6.9.2，通过异步 `QProcess` 控制独立后端。支持会话创建与封存、采集源增删启停和插件替换、参数表、质量标记、趋势、关联事件溯源、归档完整性校验和离线重算。
+
+本机可直接复用 D 盘已安装的 Python / Qt；程序数据和临时文件写入 E 盘：
+
+```powershell
+.\scripts\start-frontend.ps1 -Python D:/anaconda/python.exe -BinDir D:/avionics-builds/ground-backend-v03-final/bin -RuntimeDir C:/msys64/mingw64/bin -DataDir E:/avionics-data/ground-station
+```
+
+交付包使用 `Start-AEROBUS.cmd` 启动，MinGW 运行库已放在包内。当前启动包复用外部 Python / PySide6 环境；如使用其他环境，传入 `-Python 路径`。没有 Qt 环境时，在 D/E 盘环境安装 `frontend/requirements.txt`。操作流程、显示边界、结构化控制协议与自动化测试见 [Qt 前端说明](docs/qt-frontend.md)。
 
 ## 本轮已落地
 
@@ -42,7 +54,7 @@ python scripts/verify_capture_cli.py --build build-gcc-release
 
 归档父目录须已存在，文件与分析输出目录须是新路径。`bus_capture_worker.exe` 放在宿主旁边，运行中始终由宿主管理；没有单独启动采集工作进程的操作步骤。
 
-控制台支持 `add/start/stop/remove/replace/status/stats/events/quit`。例如 `add sensor_a E:/path/bin/bus_simulated.dll period_ms=5`，然后 `start sensor_a`。开发控制台的插件路径暂不支持空格；设备 API 和图形界面尚未实现。
+控制台支持 `add/start/stop/remove/replace/status/stats/events/quit`。例如 `add sensor_a E:/path/bin/bus_simulated.dll period_ms=5`，然后 `start sensor_a`。开发控制台的插件路径暂不支持空格；Qt 前端使用的 `--control` 接口支持中文及空格路径。
 
 正常退出写入 `session.avbus`、`session.avbus.session.json`、`session.avbus.lifecycle.jsonl` 和 `session.avbus.analysis/`。分析文件包括参数、事件和准确配置副本。会话结果独立报告采集、记录和分析状态，不能仅看一个文件是否生成。
 
@@ -65,7 +77,7 @@ python scripts/verify_capture_cli.py --build build-gcc-release
 源码提交后重新配置并构建，确保 `--version` 无 `dirty` 标记，再运行：
 
 ```powershell
-python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/v0.3.0
+python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/v0.4.0
 ```
 
 便携包包含宿主、采集进程、分析程序、两个内置插件、匹配的 MinGW 运行库及许可证、配置、文档、源码导出和 SHA-256 清单。发布使用独立目录，退出旧会话后切换目录；原始归档和旧目录保留，便于回退开发改动。失败替换会尝试恢复旧实例并明确报告结果。

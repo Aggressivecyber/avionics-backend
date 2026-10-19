@@ -4,11 +4,16 @@
 #include "core/path.hpp"
 #include "core/json.hpp"
 #include "core/build_info.hpp"
+#include "core/arguments.hpp"
 #include <iostream>
 
 int main(int argc, char** argv) {
     using namespace avionics;
     try {
+        auto arguments = utf8Arguments(argc, argv);
+        std::vector<char*> argument_pointers;
+        for (auto& argument : arguments) argument_pointers.push_back(argument.data());
+        argc = static_cast<int>(argument_pointers.size()); argv = argument_pointers.data();
         if (argc == 2 && std::string(argv[1]) == "--version") { writeBuildInfo(std::cout); std::cout << '\n'; return 0; }
         if (argc == 3 && std::string(argv[1]) == "--fixture") {
             const SessionId fixture_id{0x46,0x49,0x58,0x54,0x55,0x52,0x45,0x01,0x80,0,0,0,0,0,0,1};

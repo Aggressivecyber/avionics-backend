@@ -1,9 +1,13 @@
-# 当前架构 · v0.3
+# 当前架构 · v0.4
 
-面向地面试验和总线监测。图中是已实现的软件链路；设备 SDK、真实协议识别/解析和图形界面仍待接入。
+面向地面试验和总线监测。图中是已实现的软件链路；设备 SDK 和真实协议识别/解析仍待接入。Qt Widgets 前端已经通过异步进程接口接入。
 
 ```mermaid
 flowchart TB
+    UI[Qt Widgets / PySide6 工作台] <-->|请求编号 + JSON 状态 / 有界显示数据| CTL[异步 QProcess / 控制协议 1]
+    CTL --> M
+    E -. 最近样本 / 事件 .-> TAP[MonitorSink：512 样本 / 128 事件]
+    TAP --> CTL
     M[BusManager：启停／替换／回退] -. 超时监督 .-> W
     subgraph W[每个来源独立采集进程]
         P[模拟／回放／待接入 SDK] --> C[PluginModule + C ABI 2]
@@ -19,6 +23,7 @@ flowchart TB
     T --> E[输入规则索引 + 活动截止集合]
     E --> O[参数／事件 JSONL + 原始证据身份]
     F --> OFF[离线校验与同实现重算]
+    UI -->|独立 QProcess| OFF
     OFF --> D
     M --> J[生命周期日志与会话结果]
     A -. SDK 错误与退出原因 .-> J
@@ -34,6 +39,8 @@ flowchart TB
 
 | 模块 | 责任与扩展点 |
 | --- | --- |
+| Qt `MainWindow` / `BackendClient` | 会话、采集源和分析展示；异步进程控制；关闭等待封存 |
+| `runControlConsole` / `MonitorSink` | 结构化操作与状态响应；有界增量显示；不改变记录及分析语义 |
 | `BusManager` | 实例代次、来源生命周期、候选预检、替换及失败回退；不持全局表锁等待来源停止 |
 | `CaptureAdapter` / `WorkerProcess` | 有界消息、异步状态、命令截止、进程退出、终止与宿主接收副本 |
 | `PluginModule` | 只在采集进程中加载 ABI 2 动态库并校验函数表 |

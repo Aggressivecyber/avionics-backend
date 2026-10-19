@@ -1,4 +1,5 @@
 #include "core/processing.hpp"
+#include "core/analysis_json.hpp"
 #include "core/json.hpp"
 #include <cmath>
 #include <iomanip>
@@ -27,7 +28,7 @@ JsonlAnalysisSink::JsonlAnalysisSink(const std::filesystem::path& directory) {
     parameters_.imbue(std::locale::classic()); events_.imbue(std::locale::classic());
     parameters_ << std::setprecision(17); events_ << std::setprecision(17);
 }
-void JsonlAnalysisSink::sample(const AlignedSample& aligned) {
+void writeAlignedSample(std::ostream& parameters_, const AlignedSample& aligned) {
     const auto& s = aligned.sample;
     parameters_ << "{\"schema\":2,\"source\":" << json(s.source) << ",\"parameter\":" << json(s.parameter_id)
         << ",\"recording_session_id\":" << jsonIdentity(s.recording_session_id)
@@ -45,10 +46,10 @@ void JsonlAnalysisSink::sample(const AlignedSample& aligned) {
     parameters_ << ",\"payload_valid\":" << (s.valid ? "true" : "false")
         << ",\"usable\":" << (aligned.usable() ? "true" : "false") << ",\"quality\":[";
     for (std::size_t i = 0; i < aligned.quality.size(); ++i) { if (i) parameters_ << ','; parameters_ << json(aligned.quality[i]); }
-    parameters_ << "]}\n";
+    parameters_ << "]}";
     if (!parameters_) throw std::runtime_error("parameter output write failed");
 }
-void JsonlAnalysisSink::result(const CorrelationResult& r) {
+void writeCorrelationResult(std::ostream& events_, const CorrelationResult& r) {
     events_ << "{\"schema\":2,\"rule\":" << json(r.rule) << ",\"outcome\":" << json(r.outcome)
         << ",\"time_group\":" << json(r.time_group) << ",\"time_ns\":" << r.time_ns << ",\"metric\":";
     if (r.metric && std::isfinite(*r.metric)) events_ << *r.metric; else events_ << "null";
@@ -67,7 +68,15 @@ void JsonlAnalysisSink::result(const CorrelationResult& r) {
             << ",\"record_index\":" << e.record_index << ",\"time_ns\":" << e.time_ns
             << ",\"dictionary_version\":" << json(e.decoder_version) << '}';
     }
-    events_ << "]}\n";
+    events_ << "]}";
+    if (!events_) throw std::runtime_error("event output write failed");
+}
+void JsonlAnalysisSink::sample(const AlignedSample& aligned) {
+    writeAlignedSample(parameters_, aligned); parameters_ << '\n';
+    if (!parameters_) throw std::runtime_error("parameter output write failed");
+}
+void JsonlAnalysisSink::result(const CorrelationResult& event) {
+    writeCorrelationResult(events_, event); events_ << '\n';
     if (!events_) throw std::runtime_error("event output write failed");
 }
 void JsonlAnalysisSink::flush() {

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(avionics_backend VERSION 0.3.0 LANGUAGES C CXX)
+project(avionics_backend VERSION 0.4.0 LANGUAGES C CXX)
 
 set(AVIONICS_BUILD_REVISION "" CACHE STRING "Commit identity when building a source export without Git")
 if(NOT AVIONICS_BUILD_REVISION)
@@ -53,12 +53,14 @@ add_library(bus_core STATIC
     src/decoder/configuration.cpp
     src/decoder/dictionary_decoder.cpp
     src/analysis/processing.cpp
+    src/control_console.cpp
     src/storage/jsonl_analysis.cpp
     src/storage/session_journal.cpp
     src/analysis/rule_analyzer.cpp)
 target_link_libraries(bus_core PUBLIC bus_archive project_options Threads::Threads ${CMAKE_DL_LIBS})
 if(WIN32)
     target_compile_definitions(bus_core PRIVATE _WIN32_WINNT=0x0A00 WINVER=0x0A00)
+    target_link_libraries(bus_core PUBLIC shell32)
 endif()
 
 function(add_bus_plugin name source)
@@ -81,6 +83,7 @@ add_executable(bus_analyze src/analyze_main.cpp)
 target_link_libraries(bus_analyze PRIVATE bus_core)
 
 include(CTest)
+option(AVIONICS_TEST_QT_FRONTEND "Run Qt for Python desktop/backend integration tests" OFF)
 if(BUILD_TESTING)
     add_bus_plugin(bus_fault tests/fault_plugin.cpp)
     add_bus_plugin(bus_hang_load tests/fault_plugin.cpp)
@@ -115,4 +118,12 @@ if(BUILD_TESTING)
     add_executable(protocol_contract_tests tests/protocol_contract.cpp)
     target_link_libraries(protocol_contract_tests PRIVATE bus_core)
     add_test(NAME protocol_contract COMMAND protocol_contract_tests)
+    if(AVIONICS_TEST_QT_FRONTEND)
+        find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME qt_frontend COMMAND "${Python3_EXECUTABLE}" -B
+            "${PROJECT_SOURCE_DIR}/frontend/test_frontend.py" --bin-dir "$<TARGET_FILE_DIR:bus_backend>"
+            --output "${CMAKE_BINARY_DIR}/frontend-test-output")
+        set_tests_properties(qt_frontend PROPERTIES TIMEOUT 60
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PYTHONDONTWRITEBYTECODE=1")
+    endif()
 endif()

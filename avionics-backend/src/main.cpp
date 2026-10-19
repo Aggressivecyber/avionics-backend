@@ -5,6 +5,8 @@
 #include "core/processing.hpp"
 #include "core/json.hpp"
 #include "core/build_info.hpp"
+#include "core/arguments.hpp"
+#include "core/control_console.hpp"
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -52,11 +54,17 @@ void help() {
 int main(int argc, char** argv) {
     using namespace avionics;
     try {
+        auto arguments = utf8Arguments(argc, argv);
+        std::vector<char*> argument_pointers;
+        for (auto& argument : arguments) argument_pointers.push_back(argument.data());
+        argc = static_cast<int>(argument_pointers.size()); argv = argument_pointers.data();
         if (argc == 2 && std::string(argv[1]) == "--version") { writeBuildInfo(std::cout); std::cout << '\n'; return 0; }
-        if ((argc != 3 && argc != 4) || (std::string(argv[1]) != "--demo" && std::string(argv[1]) != "--interactive") ||
-            (argc == 4 && std::string(argv[1]) != "--interactive")) {
+        const bool control = argc > 1 && std::string(argv[1]) == "--control";
+        if ((argc != 3 && argc != 4) || (std::string(argv[1]) != "--demo" && std::string(argv[1]) != "--interactive" && !control) ||
+            (argc == 4 && std::string(argv[1]) == "--demo") || (control && argc != 4)) {
             std::cout << "Usage: bus_backend --demo SIMULATED_PLUGIN\n"
-                << "       bus_backend --interactive NEW_ARCHIVE_PATH [CONFIG_INI]\n";
+                << "       bus_backend --interactive NEW_ARCHIVE_PATH [CONFIG_INI]\n"
+                << "       bus_backend --control NEW_ARCHIVE_PATH CONFIG_INI\n";
             return argc == 1 ? 0 : 2;
         }
         const bool demo = std::string(argv[1]) == "--demo";
@@ -73,6 +81,7 @@ int main(int argc, char** argv) {
         const auto* recording = recorder.get();
         auto analyzer = std::make_shared<RuleAnalyzer>(22.0);
         std::shared_ptr<ProcessingService> service;
+        std::shared_ptr<MonitorSink> monitor;
         PipelineLimits pipeline_limits;
         std::shared_ptr<IParameterConsumer> consumer = analyzer;
         std::unique_ptr<IParameterDecoder> decoder;
@@ -83,9 +92,11 @@ int main(int argc, char** argv) {
             auto output = archive; output += ".analysis";
             auto sink = std::make_shared<JsonlAnalysisSink>(output);
             config.document->save(output / "configuration.ini");
-            service = std::make_shared<ProcessingService>(config, sink);
+            std::shared_ptr<IAnalysisSink> analysis_sink = sink;
+            if (control) { monitor = std::make_shared<MonitorSink>(sink); analysis_sink = monitor; }
+            service = std::make_shared<ProcessingService>(config, analysis_sink);
             consumer = service; decoder = std::make_unique<DictionaryDecoder>(config);
-            std::cout << "analysis_output=" << output.string() << '\n';
+            if (!control) std::cout << "analysis_output=" << output.string() << '\n';
         } else {
             auto decoders = std::make_unique<DecoderRegistry>();
             decoders->registerDecoder(BUS_PROTOCOL_SIMULATED, std::make_shared<SimulatedDecoder>());
@@ -100,10 +111,11 @@ int main(int argc, char** argv) {
             capture.command_timeout = std::chrono::milliseconds(configuration->capture_command_timeout_ms);
             capture.stop_timeout = std::chrono::milliseconds(configuration->capture_stop_timeout_ms);
         }
-        std::cout << "archive=" << std::filesystem::absolute(archive).string() << '\n';
+        if (!control) std::cout << "archive=" << std::filesystem::absolute(archive).string() << '\n';
         {
             BusManager buses(pipeline, journal, capture);
-            if (demo) {
+            if (control) runControlConsole(buses, *pipeline, *service, *monitor, *journal, archive, *configuration);
+            else if (demo) {
                 const auto plugin = pathFromUtf8(argv[2]);
                 buses.add("primary", plugin, "period_ms=5;initial_milli=20000;step_milli=500");
                 buses.add("secondary", plugin, "period_ms=5;channel=1");
@@ -164,7 +176,7 @@ int main(int argc, char** argv) {
             buses.shutdown();
         } // all plugin workers joined before draining/closing the pipeline.
         pipeline->shutdown();
-        printStats(*pipeline, *analyzer, service.get());
+        if (!control) printStats(*pipeline, *analyzer, service.get());
         const auto final = pipeline->stats();
         std::ofstream metadata(session_path, std::ios::binary);
         metadata << "{\"schema\":2,\"build\":"; writeBuildInfo(metadata);
@@ -174,8 +186,13 @@ int main(int argc, char** argv) {
             << ",\"capture_status\":" << jsonString(journal->hadFailures() || final.dropped ? "degraded" : "complete")
             << ",\"analysis_status\":" << jsonString(final.analysis_healthy ? "complete" : "incomplete")
             << ",\"analysis_failure\":" << jsonString(final.analysis_failure)
-            << ",\"analysis_cursor\":" << final.analysis_cursor << ",\"analysis_skipped\":" << final.analysis_skipped
-            << ",\"analysis_first_missing\":";
+            << ",\"analysis_cursor\":" << final.analysis_cursor << ",\"analysis_skipped\":" << final.analysis_skipped;
+        if (service) {
+            const auto processed = service->stats();
+            metadata << ",\"samples\":" << processed.samples << ",\"usable\":" << processed.usable
+                << ",\"quality_rejected\":" << processed.rejected << ",\"results\":" << processed.results;
+        }
+        metadata << ",\"analysis_first_missing\":";
         if (final.analysis_first_missing) metadata << *final.analysis_first_missing; else metadata << "null";
         metadata
             << ",\"recording_failure\":" << jsonString(final.failure)
@@ -193,6 +210,11 @@ int main(int argc, char** argv) {
         }
         metadata << "}}\n";
         metadata.close(); if (!metadata) throw std::runtime_error("cannot write session metadata");
+        if (control) {
+            std::ifstream completed(session_path, std::ios::binary);
+            std::string finalized; std::getline(completed, finalized);
+            std::cout << "{\"schema\":1,\"type\":\"closed\",\"data\":" << finalized << "}\n" << std::flush;
+        }
         return final.healthy ? (final.analysis_healthy ? (journal->hadFailures() || final.dropped ? 4 : 0) : 3) : 1;
     } catch (const std::exception& e) { std::cerr << "fatal: " << e.what() << '\n'; return 1; }
 }

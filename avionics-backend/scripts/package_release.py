@@ -43,11 +43,22 @@ def main():
     shutil.copytree(root / "config", output / "config")
     shutil.copytree(root / "docs", output / "docs")
     shutil.copy2(root / "README.md", output / "README.md")
+    shutil.copytree(root / "frontend" / "ground_station", output / "frontend" / "ground_station",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copy2(root / "frontend" / "requirements.txt", output / "frontend" / "requirements.txt")
+    (output / "scripts").mkdir()
+    shutil.copy2(root / "scripts" / "start-frontend.ps1", output / "scripts" / "start-frontend.ps1")
+    (output / "Start-AEROBUS.cmd").write_text(
+        '@echo off\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\start-frontend.ps1" '
+        '-BinDir "%~dp0bin" %*\n', encoding="ascii")
     subprocess.run(["git", "archive", "--format=zip", "--output=" + str(output / "source.zip"), revision],
                    cwd=root, check=True, creationflags=flags)
     files = {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(output.rglob("*")) if path.is_file()}
     manifest = {"build": version, "platform": "windows-x64-mingw", "acceptance_scope": "software-architecture-baseline",
+                "desktop": {"toolkit": "Qt Widgets", "binding": "PySide6", "tested_version": "6.9.2",
+                            "python_qt_runtime": "external", "launcher": "Start-AEROBUS.cmd",
+                            "control_schema": 1},
                 "hardware_acceptance": "pending-selected-bus-sdk-and-workload", "files": files}
     (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     files["manifest.json"] = hashlib.sha256((output / "manifest.json").read_bytes()).hexdigest()
