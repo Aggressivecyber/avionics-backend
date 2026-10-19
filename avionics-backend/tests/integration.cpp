@@ -249,7 +249,7 @@ void testLifecycle(const std::filesystem::path& simulated, const std::filesystem
         buses.add("b", simulated, "period_ms=1;channel=1;step_milli=0");
         buses.start("a"); buses.start("b");
         eventually([&] { return buses.status("a").emitted >= 5 && buses.status("b").emitted >= 5; }, "simulated sources not running");
-        check(buses.loadedPluginCount() == 1, "two instances must share module ownership");
+        check(buses.sourceCount() == 2, "two independent sources were not retained");
         const auto a_before = buses.status("a");
         const auto b_before = buses.status("b");
         throws([&] { buses.add("a", simulated, ""); }, "duplicate source must be rejected");
@@ -274,8 +274,8 @@ void testLifecycle(const std::filesystem::path& simulated, const std::filesystem
         eventually([&] { return buses.status("b").emitted > b_count + 2; }, "second source stalled");
         check(pipeline->stats().sources.at("a").accepted == stopped, "callback arrived after stop returned");
         buses.start("a"); eventually([&] { return buses.status("a").emitted >= 2; }, "restart failed");
-        buses.remove("a"); check(buses.loadedPluginCount() == 1, "module unloaded while second instance still owns it");
-        buses.remove("b"); check(buses.loadedPluginCount() == 0, "module handle retained after last adapter removed");
+        buses.remove("a"); check(buses.sourceCount() == 1, "second source was removed unexpectedly");
+        buses.remove("b"); check(buses.sourceCount() == 0, "source retained after remove");
     }
     pipeline->shutdown();
     auto stats = pipeline->stats();
@@ -303,8 +303,8 @@ void testLifecycle(const std::filesystem::path& simulated, const std::filesystem
         eventually([&] { return buses.status("replay").state != AdapterState::Running; }, "replay did not reach EOF");
         const auto status = buses.status("replay");
         check(status.errors == 0 && status.emitted == records && status.rejected == 0, "replay count/fault mismatch");
-        check(buses.loadedPluginCount() == 1, "old library remained loaded after cross-plugin swap");
-        buses.remove("replay"); check(buses.loadedPluginCount() == 0, "replay module did not release");
+        check(buses.sourceCount() == 1, "cross-plugin swap changed source count");
+        buses.remove("replay"); check(buses.sourceCount() == 0, "replay source did not release");
     }
     replay_pipeline->shutdown();
     std::size_t replay_records{};
@@ -318,7 +318,8 @@ void testLifecycle(const std::filesystem::path& simulated, const std::filesystem
         check(f.payload == original.payload && f.protocol == original.protocol && f.channel == original.channel &&
             f.flags == original.flags && f.sequence == original.sequence && f.capture_time_ns == original.capture_time_ns &&
             f.origin_source == original.source && f.origin_generation == original.generation &&
-            f.origin_record_index == original.record_index, "replay changed original payload, timestamp or provenance");
+            f.origin_record_index == original.record_index && f.origin_session_id == original.recording_session_id,
+            "replay changed original payload, timestamp or provenance");
     }
     check(replay_records == records && !originals.next(original), "replay archive missing original frames");
     check(replay_pipeline->stats().healthy, "replay pipeline failed");

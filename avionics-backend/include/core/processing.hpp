@@ -4,6 +4,7 @@
 #include <fstream>
 #include <memory>
 #include <mutex>
+#include <set>
 
 namespace avionics {
 struct AlignedSample {
@@ -74,6 +75,7 @@ private:
     struct PairState { std::optional<AlignedSample> left, right; };
     struct ResponseState {
         std::optional<AlignedSample> command, response, pending;
+        std::optional<std::uint64_t> final_deadline;
     };
     void processConsistency(const AlignedSample&);
     void processResponse(const AlignedSample&);
@@ -87,6 +89,8 @@ private:
     };
     void drain(ReorderGroup&, std::uint64_t limit, bool inclusive);
     void expire(const std::string& group, std::uint64_t time_ns, bool inclusive);
+    void clearPending(std::size_t rule);
+    void schedulePending(std::size_t rule, const AlignedSample&);
     void emit(CorrelationResult);
     BackendConfiguration config_;
     TimeQualityProcessor quality_;
@@ -94,6 +98,9 @@ private:
     std::vector<PairState> pairs_;
     std::vector<ResponseState> responses_;
     std::map<std::pair<std::string, std::string>, std::vector<std::size_t>> consistency_by_input_, responses_by_input_;
+    std::map<std::string, std::set<std::pair<std::uint64_t, std::size_t>>> deadlines_;
+    std::map<std::pair<std::string, std::string>, std::uint64_t> response_clock_uncertainty_;
+    std::set<std::string> known_groups_;
     std::map<std::string, std::uint64_t> watermarks_;
     std::map<std::string, ReorderGroup> reorder_;
     std::size_t buffered_{};

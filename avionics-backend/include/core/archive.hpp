@@ -13,7 +13,7 @@ public:
     virtual void flush() = 0;
     virtual void finish() { flush(); }
 };
-enum class ArchiveIntegrity { Unsealed, LegacyUnverified, Sealed };
+enum class ArchiveIntegrity { Unsealed, Sealed };
 struct ArchiveSummary {
     std::uint32_t format_version{2};
     ArchiveIntegrity integrity{ArchiveIntegrity::Unsealed};
@@ -39,7 +39,7 @@ private:
 class ArchiveReader {
 public:
     explicit ArchiveReader(const std::filesystem::path&);
-    bool next(RawFrame&); // v2 EOF requires a verified seal; v1 remains explicitly unverified.
+    bool next(RawFrame&); // EOF requires a verified seal.
     const ArchiveSummary& summary() const noexcept { return summary_; }
 private:
     std::ifstream stream_;

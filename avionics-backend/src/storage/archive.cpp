@@ -17,7 +17,6 @@
 
 namespace avionics {
 namespace {
-constexpr std::array<std::uint8_t, 8> magic_v1{'A','V','B','U','S','0','1','\n'};
 constexpr std::array<std::uint8_t, 8> magic_v2{'A','V','B','U','S','0','2','\n'};
 constexpr std::uint32_t max_body = BUS_MAX_PAYLOAD + 512;
 template<class T> void put(std::vector<std::uint8_t>& out, T value) {
@@ -45,7 +44,7 @@ void exact(std::istream& input, char* destination, std::streamsize size) {
 }
 }
 const char* archiveIntegrityName(ArchiveIntegrity state) {
-    constexpr const char* names[]{"unsealed", "legacy_unverified", "sealed"};
+    constexpr const char* names[]{"unsealed", "sealed"};
     return names[static_cast<std::size_t>(state)];
 }
 void writeArchiveSummary(std::ostream& out, const ArchiveSummary& s) {
@@ -136,27 +135,23 @@ ArchiveReader::ArchiveReader(const std::filesystem::path& path) : stream_(path, 
     if (!stream_) throw std::runtime_error("cannot open archive: " + path.string());
     std::array<std::uint8_t, 8> header{};
     exact(stream_, reinterpret_cast<char*>(header.data()), static_cast<std::streamsize>(header.size()));
-    if (header == magic_v1) { summary_.format_version = 1; summary_.integrity = ArchiveIntegrity::LegacyUnverified; }
-    else if (header != magic_v2) throw std::runtime_error("unsupported archive format");
+    if (header != magic_v2) throw std::runtime_error("unsupported archive format; rebuild pre-release inputs using v2");
     data_hash_.update(header); file_hash_.update(header); summary_.data_bytes = 8;
-    if (summary_.format_version == 2) {
-        SessionId identity{}; exact(stream_, reinterpret_cast<char*>(identity.data()), static_cast<std::streamsize>(identity.size()));
-        summary_.session_id = identity; summary_.data_bytes += identity.size(); data_hash_.update(identity); file_hash_.update(identity);
-    }
+    SessionId identity{}; exact(stream_, reinterpret_cast<char*>(identity.data()), static_cast<std::streamsize>(identity.size()));
+    summary_.session_id = identity; summary_.data_bytes += identity.size(); data_hash_.update(identity); file_hash_.update(identity);
 }
 bool ArchiveReader::next(RawFrame& frame) {
     if (ended_) return false;
     if (stream_.peek() == std::char_traits<char>::eof()) {
         if (stream_.bad()) throw std::runtime_error("archive read failed");
-        if (summary_.format_version == 2) throw std::runtime_error("unsealed archive: expected session footer");
-        summary_.data_sha256 = data_hash_.finish(); summary_.file_sha256 = file_hash_.finish(); ended_ = true; return false;
+        throw std::runtime_error("unsealed archive: expected session footer");
     }
     std::vector<std::uint8_t> header(8);
     exact(stream_, reinterpret_cast<char*>(header.data()), 8);
     std::size_t at{};
     const auto size = get<std::uint32_t>(header, at);
     const auto expected_crc = get<std::uint32_t>(header, at);
-    if (summary_.format_version == 2 && size == 0) {
+    if (size == 0) {
         std::vector<std::uint8_t> footer(56); exact(stream_, reinterpret_cast<char*>(footer.data()), 56);
         if (crc32(footer) != expected_crc) throw std::runtime_error("archive footer CRC mismatch");
         at = 0;
@@ -186,8 +181,8 @@ bool ArchiveReader::next(RawFrame& frame) {
     const auto origin_size = get<std::uint16_t>(body, at);
     const auto payload_size = get<std::uint32_t>(body, at);
     const auto data_end = at + source_size + origin_size + payload_size;
-    if (source_size == 0 || source_size > 128 || origin_size > 128 || payload_size > BUS_MAX_PAYLOAD || data_end > body.size() ||
-        (summary_.format_version == 1 && data_end != body.size())) throw std::runtime_error("invalid archive field sizes");
+    if (source_size == 0 || source_size > 128 || origin_size > 128 || payload_size > BUS_MAX_PAYLOAD || data_end > body.size())
+        throw std::runtime_error("invalid archive field sizes");
     f.source.assign(reinterpret_cast<const char*>(body.data() + at), source_size); at += source_size;
     f.origin_source.assign(reinterpret_cast<const char*>(body.data() + at), origin_size); at += origin_size;
     f.payload.assign(body.begin() + static_cast<std::ptrdiff_t>(at), body.begin() + static_cast<std::ptrdiff_t>(data_end)); at = data_end;
@@ -200,7 +195,7 @@ bool ArchiveReader::next(RawFrame& frame) {
         } else if (!type || (type & 0x8000u)) throw std::runtime_error("unsupported required archive extension");
         at += length;
     }
-    if (summary_.format_version == 2 && (!f.record_index || f.record_index <= summary_.last_record_index))
+    if (!f.record_index || f.record_index <= summary_.last_record_index)
         throw std::runtime_error("invalid archive record identity order");
     f.recording_session_id = summary_.session_id;
     ++summary_.records; summary_.data_bytes += header.size() + body.size(); summary_.last_record_index = f.record_index;

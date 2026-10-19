@@ -40,6 +40,7 @@ std::uint64_t count(const ProcessingService& service, const std::string& outcome
 }
 void testConfiguration(const std::filesystem::path& path, const std::filesystem::path& output) {
     std::ifstream stream(path); std::ostringstream text; text << stream.rdbuf(); const auto original = text.str();
+    const auto dictionary = original.substr(0, original.find("[processing]"));
     auto reject = [&](std::string modified) {
         const auto file = output / "invalid.ini";
         { std::ofstream out(file); out << modified; }
@@ -54,36 +55,36 @@ void testConfiguration(const std::filesystem::path& path, const std::filesystem:
     replace("max_age_ms=50", "max_age_ms=-1");
     replace("type=signed", "type=mystery");
     replace("command_parameter=command", "command_parameter=missing");
-    replace("schema=1", "schema=2");
-    replace("schema=1", "schema=99");
+    replace("schema=2", "schema=1");
+    replace("schema=2", "schema=99");
     replace("window_ms=5", "window_ms=5\nwindow_ms=5");
     reject(original + "\n[unknown section]\nx=1\n");
-    reject(original + "\n[processing]\nmax_parameter_states=3\n");
-    reject(original + "\n[processing]\nmax_parameter_states=0\n");
-    reject(original + "\n[processing]\nmax_reorder_samples=0\n");
+    reject(dictionary);
+    reject(dictionary + "\n[processing]\nallowed_lateness_ms=0\nmax_parameter_states=3\n");
+    reject(dictionary + "\n[processing]\nallowed_lateness_ms=0\nmax_parameter_states=0\n");
+    reject(dictionary + "\n[processing]\nallowed_lateness_ms=0\nmax_reorder_samples=0\n");
     reject(original + "\n[pipeline]\nsource_frames=8192\n");
     reject(original + "\n[pipeline]\nqueue_bytes=0\n");
+    reject(original + "\n[capture]\nstop_timeout_ms=0\n");
     const auto valid = BackendConfiguration::load(path);
     const auto snapshot = output / "snapshot.ini"; valid.document->save(snapshot);
     std::ifstream snapshot_input(snapshot, std::ios::binary); std::ostringstream saved; saved << snapshot_input.rdbuf();
     check(saved.str() == valid.document->bytes, "configuration snapshot was not the exact parsed bytes");
     check(valid.fields.size() == 4 && valid.responses.size() == 1 && valid.consistency.size() == 1, "configuration lost rules");
     const auto budgeted = output / "budgeted.ini";
-    { std::ofstream out(budgeted); out << original << "\n[processing]\nmax_parameter_states=8192\n"; }
+    { std::ofstream out(budgeted); out << dictionary << "\n[processing]\nallowed_lateness_ms=0\nmax_parameter_states=8192\n"; }
     check(BackendConfiguration::load(budgeted).max_parameter_states == 8192, "explicit state capacity was not loaded");
-    auto profile = original;
-    profile.replace(profile.find("schema=1"), 8, "schema=2");
-    { std::ofstream out(budgeted); out << profile << "\n[processing]\nallowed_lateness_ms=50\nmax_reorder_samples=32\n"; }
+    { std::ofstream out(budgeted); out << dictionary << "\n[processing]\nallowed_lateness_ms=50\nmax_reorder_samples=32\n"; }
     const auto configured = BackendConfiguration::load(budgeted);
     check(configured.allowed_lateness_ns == 50000000 && configured.max_reorder_samples == 32,
         "schema 2 did not preserve its explicit event-time contract");
     std::ostringstream large_text;
-    large_text << "[dictionary]\nschema=1\nversion=capacity-test\n[clock cap]\ndomain=1\ngroup=host\n";
+    large_text << "[dictionary]\nschema=2\nversion=capacity-test\n[clock cap]\ndomain=1\ngroup=host\n";
     for (int i = 0; i < 4097; ++i)
         large_text << "\n[parameter p" << i << "]\nsource=cap\nprotocol=65535\nchannel=0\nbit_offset=0\n"
                    << "bit_width=64\nbyte_order=little\ntype=unsigned\nunit=raw\nmax_age_ms=50\n";
-    reject(large_text.str());
-    { std::ofstream out(budgeted); out << large_text.str() << "\n[processing]\nmax_parameter_states=8192\n"; }
+    reject(large_text.str() + "\n[processing]\nallowed_lateness_ms=0\n");
+    { std::ofstream out(budgeted); out << large_text.str() << "\n[processing]\nallowed_lateness_ms=0\nmax_parameter_states=8192\n"; }
     const auto large = BackendConfiguration::load(budgeted);
     auto sink = std::make_shared<MemorySink>(); ProcessingService service(large, sink);
     RawFrame raw; raw.source = "cap"; raw.protocol = 65535; raw.clock_domain = 1;
@@ -139,6 +140,10 @@ void testTime(const BackendConfiguration& cfg) {
     s.sequence = 11; s.capture_time_ns -= 1;
     check(!quality.process(s).usable(), "out-of-order sample not rejected");
     s.generation = 2; check(quality.process(s).usable(), "new generation should reset sequence/time state");
+    s.origin_session_id = newSessionId();
+    check(quality.process(s).usable(), "new original session reused the old duplicate state");
+    ContentDigest changed_configuration{}; changed_configuration[0] = 1; s.configuration_sha256 = changed_configuration;
+    check(quality.process(s).usable(), "configuration content identity reused old sequence state");
     s.clock_domain = 999; check(!quality.process(s).time_ns, "unknown clock silently mapped");
     TimeQualityProcessor shifted({ClockDefinition{"control", "g", 1, 100, 3}});
     s.clock_domain = 1; s.capture_time_ns = 20;

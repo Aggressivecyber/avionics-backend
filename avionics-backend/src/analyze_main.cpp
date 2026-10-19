@@ -3,11 +3,13 @@
 #include "core/demo_fixture.hpp"
 #include "core/path.hpp"
 #include "core/json.hpp"
+#include "core/build_info.hpp"
 #include <iostream>
 
 int main(int argc, char** argv) {
     using namespace avionics;
     try {
+        if (argc == 2 && std::string(argv[1]) == "--version") { writeBuildInfo(std::cout); std::cout << '\n'; return 0; }
         if (argc == 3 && std::string(argv[1]) == "--fixture") {
             const SessionId fixture_id{0x46,0x49,0x58,0x54,0x55,0x52,0x45,0x01,0x80,0,0,0,0,0,0,1};
             ArchiveWriter writer(pathFromUtf8(argv[2]), fixture_id);
@@ -48,7 +50,8 @@ int main(int argc, char** argv) {
         }
         service.finish(); const auto stats = service.stats();
         std::ofstream summary(output / "summary.json", std::ios::binary);
-        summary << "{\"schema\":2,\"status\":\"complete\",\"archive\":"; writeArchiveSummary(summary, reader.summary());
+        summary << "{\"schema\":2,\"status\":\"complete\",\"build\":"; writeBuildInfo(summary);
+        summary << ",\"archive\":"; writeArchiveSummary(summary, reader.summary());
         summary << ",\"configuration_sha256\":" << jsonString(hexIdentity(config.document->sha256)) << ",\"records\":" << records
             << ",\"unmatched_records\":" << unmatched << ",\"samples\":" << stats.samples << ",\"usable\":" << stats.usable
             << ",\"rejected\":" << stats.rejected << ",\"results\":" << stats.results << ",\"outcomes\":{";

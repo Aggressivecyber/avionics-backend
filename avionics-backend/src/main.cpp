@@ -4,6 +4,7 @@
 #include "core/decoder_registry.hpp"
 #include "core/processing.hpp"
 #include "core/json.hpp"
+#include "core/build_info.hpp"
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -51,6 +52,7 @@ void help() {
 int main(int argc, char** argv) {
     using namespace avionics;
     try {
+        if (argc == 2 && std::string(argv[1]) == "--version") { writeBuildInfo(std::cout); std::cout << '\n'; return 0; }
         if ((argc != 3 && argc != 4) || (std::string(argv[1]) != "--demo" && std::string(argv[1]) != "--interactive") ||
             (argc == 4 && std::string(argv[1]) != "--interactive")) {
             std::cout << "Usage: bus_backend --demo SIMULATED_PLUGIN\n"
@@ -91,9 +93,16 @@ int main(int argc, char** argv) {
         }
         auto pipeline = std::make_shared<FramePipeline>(pipeline_limits, std::move(recorder),
             std::move(decoder), consumer);
+        auto journal_path = archive; journal_path += ".lifecycle.jsonl";
+        auto journal = std::make_shared<SessionJournal>(journal_path);
+        CaptureOptions capture;
+        if (configuration) {
+            capture.command_timeout = std::chrono::milliseconds(configuration->capture_command_timeout_ms);
+            capture.stop_timeout = std::chrono::milliseconds(configuration->capture_stop_timeout_ms);
+        }
         std::cout << "archive=" << std::filesystem::absolute(archive).string() << '\n';
         {
-            BusManager buses(pipeline);
+            BusManager buses(pipeline, journal, capture);
             if (demo) {
                 const auto plugin = pathFromUtf8(argv[2]);
                 buses.add("primary", plugin, "period_ms=5;initial_milli=20000;step_milli=500");
@@ -107,7 +116,7 @@ int main(int argc, char** argv) {
                 std::cout << "primary replaced; secondary generation=" << before.generation << " -> " << after.generation
                     << ", emitted=" << before.emitted << " -> " << after.emitted << '\n';
                 buses.remove("primary"); buses.remove("secondary");
-                std::cout << "loaded_plugins_after_remove=" << buses.loadedPluginCount() << '\n';
+                std::cout << "sources_after_remove=" << buses.sourceCount() << '\n';
             } else {
                 help();
                 std::string line;
@@ -145,24 +154,45 @@ int main(int argc, char** argv) {
                         else if (command == "status") {
                             const auto s = buses.status(id);
                             std::cout << stateName(s.state) << " generation=" << s.generation << " emitted=" << s.emitted
-                                << " rejected=" << s.rejected << " errors=" << s.errors << " malformed=" << s.malformed << '\n';
+                                << " rejected=" << s.rejected << " errors=" << s.errors << " malformed=" << s.malformed
+                                << " plugin_abi=" << s.plugin_abi << '\n';
+                            if (!s.failure.empty()) std::cout << "source_failure=" << s.failure << '\n';
                         } else throw std::invalid_argument("unknown command");
                     } catch (const std::exception& e) { std::cerr << "command failed: " << e.what() << '\n'; }
                 }
             }
+            buses.shutdown();
         } // all plugin workers joined before draining/closing the pipeline.
         pipeline->shutdown();
         printStats(*pipeline, *analyzer, service.get());
         const auto final = pipeline->stats();
         std::ofstream metadata(session_path, std::ios::binary);
-        metadata << "{\"schema\":2,\"archive\":"; writeArchiveSummary(metadata, recording->summary());
+        metadata << "{\"schema\":2,\"build\":"; writeBuildInfo(metadata);
+        metadata << ",\"archive\":"; writeArchiveSummary(metadata, recording->summary());
         metadata << ",\"recording_healthy\":" << (final.healthy ? "true" : "false")
             << ",\"configuration_sha256\":" << (configuration ? jsonString(hexIdentity(configuration->document->sha256)) : "null")
+            << ",\"capture_status\":" << jsonString(journal->hadFailures() || final.dropped ? "degraded" : "complete")
             << ",\"analysis_status\":" << jsonString(final.analysis_healthy ? "complete" : "incomplete")
             << ",\"analysis_failure\":" << jsonString(final.analysis_failure)
+            << ",\"analysis_cursor\":" << final.analysis_cursor << ",\"analysis_skipped\":" << final.analysis_skipped
+            << ",\"analysis_first_missing\":";
+        if (final.analysis_first_missing) metadata << *final.analysis_first_missing; else metadata << "null";
+        metadata
             << ",\"recording_failure\":" << jsonString(final.failure)
-            << ",\"accepted\":" << final.accepted << ",\"recorded\":" << final.recorded << ",\"dropped\":" << final.dropped << "}\n";
+            << ",\"accepted\":" << final.accepted << ",\"recorded\":" << final.recorded << ",\"dropped\":" << final.dropped
+            << ",\"rejections\":{\"closed\":" << final.rejections.closed << ",\"storage_fault\":" << final.rejections.storage_fault
+            << ",\"queue_frames\":" << final.rejections.queue_frames << ",\"queue_bytes\":" << final.rejections.queue_bytes
+            << ",\"source_frames\":" << final.rejections.source_frames << ",\"source_bytes\":" << final.rejections.source_bytes
+            << ",\"source_capacity\":" << final.rejections.source_capacity << "},\"sources\":{";
+        bool first = true;
+        for (const auto& [id, counters] : final.sources) {
+            if (!first) metadata << ',';
+            first = false;
+            metadata << jsonString(id) << ":{\"accepted\":" << counters.accepted << ",\"recorded\":" << counters.recorded
+                << ",\"analysis_consumed\":" << counters.completed << ",\"dropped\":" << counters.dropped << '}';
+        }
+        metadata << "}}\n";
         metadata.close(); if (!metadata) throw std::runtime_error("cannot write session metadata");
-        return final.healthy ? (final.analysis_healthy ? 0 : 3) : 1;
+        return final.healthy ? (final.analysis_healthy ? (journal->hadFailures() || final.dropped ? 4 : 0) : 3) : 1;
     } catch (const std::exception& e) { std::cerr << "fatal: " << e.what() << '\n'; return 1; }
 }

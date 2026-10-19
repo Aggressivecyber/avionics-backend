@@ -31,11 +31,14 @@ int main() {
                       << ",\"items\":20000,\"elapsed_ns\":" << elapsed << "}\n";
         }
     }
-    for (int rules : {0, 100, 1000, 5000}) {
+    for (const std::string family : {"consistency_rules", "response_rules"}) {
+      for (int rules : {0, 100, 1000, 5000}) {
         BackendConfiguration config; config.version = "benchmark";
         config.clocks.push_back({"bench", "host", 1, 0, 0});
-        for (int i = 0; i < rules; ++i)
-            config.consistency.push_back({"rule" + std::to_string(i), {"left", "p"}, {"right", "p"}, 1, 1000000});
+        for (int i = 0; i < rules; ++i) {
+            if (family == "consistency_rules") config.consistency.push_back({"rule" + std::to_string(i), {"left", "p"}, {"right", "p"}, 1, 1000000});
+            else config.responses.push_back({"response" + std::to_string(i), {"left", "p"}, {"right", "p"}, 0.5, 0.5, 1000000});
+        }
         for (int run = 0; run < 3; ++run) {
             ProcessingService service(config, std::make_shared<CountSink>());
             ParameterSample sample; sample.source = "bench"; sample.parameter_id = "p"; sample.clock_domain = 1;
@@ -48,8 +51,9 @@ int main() {
             const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
                 std::chrono::steady_clock::now() - begin).count();
             if (service.stats().usable != 10000) throw std::runtime_error("rule benchmark output mismatch");
-            std::cout << "{\"component\":\"rules\",\"size\":" << rules << ",\"run\":" << run
+            std::cout << "{\"component\":\"" << family << "\",\"size\":" << rules << ",\"run\":" << run
                       << ",\"items\":10000,\"elapsed_ns\":" << elapsed << "}\n";
         }
+      }
     }
 }

@@ -61,10 +61,13 @@ public:
         if (running_) throw std::logic_error("adapter is already running");
         if (thread_.joinable()) thread_.join();
         beforeStart();
+        { std::lock_guard lock(error_mutex_); last_error_.clear(); }
         stop_requested_ = false; emitted_ = 0; rejected_ = 0; errors_ = 0; running_ = true;
         try {
             thread_ = std::thread([this] {
-                try { run(); } catch (...) { ++errors_; }
+                try { run(); }
+                catch (const std::exception& error) { std::lock_guard lock(error_mutex_); last_error_ = error.what(); ++errors_; }
+                catch (...) { std::lock_guard lock(error_mutex_); last_error_ = "non-standard plugin worker exception"; ++errors_; }
                 running_ = false;
             });
         } catch (...) { running_ = false; throw; }
@@ -77,6 +80,10 @@ public:
     }
     void status(BusAdapterStatus& out) const noexcept {
         out = {sizeof(out), running_ ? 1u : 0u, emitted_.load(), rejected_.load(), errors_.load()};
+    }
+    void lastError(BusError& out) const {
+        std::lock_guard lock(error_mutex_);
+        std::snprintf(out.message, BUS_ERROR_CAPACITY, "%s", last_error_.c_str());
     }
 protected:
     void prepareConfigure() {
@@ -105,6 +112,8 @@ private:
     std::thread thread_;
     std::mutex wait_mutex_;
     std::condition_variable changed_;
+    mutable std::mutex error_mutex_;
+    std::string last_error_;
 };
 
 template<class Function> std::int32_t guard(Function&& function, BusError* error) noexcept {
@@ -118,7 +127,7 @@ template<class T> struct Glue {
     static std::int32_t BUS_CALL create(const BusHost* host, void** output, BusError* error) noexcept {
         if (output) *output = nullptr;
         return guard([&] {
-            if (!host || !output || host->struct_size < sizeof(BusHost) || host->abi_version != BUS_ABI_VERSION ||
+            if (!host || !output || host->struct_size != sizeof(BusHost) || host->abi_version != BUS_ABI_VERSION ||
                 !host->emit_frame || !host->monotonic_now_ns) throw std::invalid_argument("invalid host ABI");
             *output = new T(*host);
         }, error);
@@ -142,13 +151,20 @@ template<class T> struct Glue {
         }, error);
     }
     static std::int32_t query(std::uint32_t requested, BusPluginApi* output, const char* name) noexcept {
-        if (requested != BUS_ABI_VERSION || !output || output->struct_size < sizeof(BusPluginApi)) return 0;
+        if (requested != BUS_ABI_VERSION || !output || output->struct_size != sizeof(BusPluginApi)) return 0;
         BusPluginApi api{};
-        api.struct_size = sizeof(api); api.abi_version = BUS_ABI_VERSION;
+        api.struct_size = sizeof(api); api.abi_version = requested;
         std::snprintf(api.name, sizeof(api.name), "%s", name);
         api.create = &create; api.configure = &configure; api.start = &start;
         api.stop = &stop; api.destroy = &destroy; api.status = &status;
+        api.last_error = &lastError;
         *output = api; return 1;
+    }
+    static std::int32_t BUS_CALL lastError(void* handle, BusError* output) noexcept {
+        return guard([&] {
+            if (!output) throw std::invalid_argument("missing error buffer");
+            instance(handle).lastError(*output);
+        }, output);
     }
 };
 }

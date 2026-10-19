@@ -22,8 +22,8 @@ def main():
     run = Path("runs") / f"live_roundtrip_{time.time_ns()}"
     run.mkdir(parents=True)
     env = os.environ.copy()
-    if os.name == "nt":
-        env["PATH"] = r"C:\msys64\mingw64\bin;" + env.get("PATH", "")
+    if os.name == "nt" and "AVIONICS_MINGW_BIN" in env:
+        env["PATH"] = env["AVIONICS_MINGW_BIN"] + ";" + env.get("PATH", "")
     suffix = ".exe" if os.name == "nt" else ""
     plugin_suffix = ".dll" if os.name == "nt" else ".so"
     binaries = Path(args.build) / "bin"

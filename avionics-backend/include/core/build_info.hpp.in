@@ -1,0 +1,10 @@
+#pragma once
+#include <ostream>
+namespace avionics {
+inline constexpr char build_version[] = "@PROJECT_VERSION@";
+inline constexpr char build_revision[] = "@AVIONICS_BUILD_REVISION@";
+inline void writeBuildInfo(std::ostream& out) {
+    out << "{\"version\":\"" << build_version << "\",\"revision\":\"" << build_revision
+        << "\",\"plugin_abi\":2,\"archive_format\":2,\"configuration_schema\":2,\"result_schema\":2}";
+}
+}

@@ -5,9 +5,10 @@
 
 namespace avionics {
 namespace {
-bool sameEpoch(const AlignedSample& a, const AlignedSample& b) {
-    return a.sample.generation == b.sample.generation && a.sample.origin_generation == b.sample.origin_generation &&
-        a.sample.decoder_version == b.sample.decoder_version;
+bool sameEpoch(const ParameterSample& a, const ParameterSample& b) {
+    return a.generation == b.generation && a.origin_generation == b.origin_generation && a.decoder_version == b.decoder_version &&
+        a.recording_session_id == b.recording_session_id && a.origin_session_id == b.origin_session_id &&
+        a.configuration_sha256 == b.configuration_sha256;
 }
 std::optional<double> numeric(const ParameterValue& value) {
     return std::visit([](const auto& item) -> std::optional<double> {
@@ -71,8 +72,7 @@ AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
     if (!sample.valid) return out;
     const auto key = std::make_pair(sample.source, sample.parameter_id);
     auto found = previous_.find(key);
-    if (found != previous_.end() && found->second.sample.generation == sample.generation &&
-        found->second.sample.origin_generation == sample.origin_generation && found->second.sample.decoder_version == sample.decoder_version) {
+    if (found != previous_.end() && sameEpoch(found->second.sample, sample)) {
         const auto& last = found->second;
         if (*out.time_ns < last.time_ns) out.quality.push_back("out_of_order");
         if (sample.sequence == last.sample.sequence) out.quality.push_back("duplicate_sequence");
@@ -88,6 +88,10 @@ ProcessingService::ProcessingService(BackendConfiguration config, std::shared_pt
     : config_(std::move(config)), quality_(config_.clocks, config_.max_parameter_states), sink_(std::move(sink)),
       pairs_(config_.consistency.size()), responses_(config_.responses.size()) {
     if (!sink_) throw std::invalid_argument("analysis sink is required");
+    for (const auto& clock : config_.clocks) {
+        known_groups_.insert(clock.group);
+        response_clock_uncertainty_[{clock.source, clock.group}] += clock.uncertainty_ns;
+    }
     for (std::size_t i = 0; i < config_.consistency.size(); ++i) {
         const auto& rule = config_.consistency[i];
         consistency_by_input_[{rule.left.source, rule.left.parameter}].push_back(i);
@@ -172,7 +176,7 @@ void ProcessingService::processConsistency(const AlignedSample& sample) {
         const auto& rule = config_.consistency[i]; auto& pair = pairs_[i];
         const bool left = rule.left.matches(sample.sample);
         auto& side = left ? pair.left : pair.right;
-        const bool changed = side && !sameEpoch(*side, sample);
+        const bool changed = side && !sameEpoch(side->sample, sample.sample);
         if (changed || !sample.usable()) { pair.left.reset(); pair.right.reset(); }
         if (!sample.usable()) continue;
         side = sample;
@@ -201,10 +205,11 @@ void ProcessingService::processResponse(const AlignedSample& sample) {
         const auto& rule = config_.responses[i]; auto& state = responses_[i];
         const bool command = rule.command.matches(sample.sample), response = rule.response.matches(sample.sample);
         auto& previous = command ? state.command : state.response;
-        const bool boundary = previous && !sameEpoch(*previous, sample);
+        const bool boundary = previous && !sameEpoch(previous->sample, sample.sample);
         const auto value = numeric(sample.sample.value);
         if (boundary || !sample.usable() || !value) {
             if (state.pending) emit(event(rule.id, "response_cancelled", *state.pending, &sample));
+            clearPending(i);
             state = {};
             if (!sample.usable() || !value) continue;
         }
@@ -215,13 +220,13 @@ void ProcessingService::processResponse(const AlignedSample& sample) {
             *old_value < threshold && *value >= threshold;
         if (command && rising) {
             if (state.pending) emit(event(rule.id, "response_superseded", *state.pending, &sample));
-            state.pending.reset();
+            clearPending(i);
             const auto baseline = state.response ? numeric(state.response->sample.value) : std::nullopt;
             if (!state.response || state.response->time_group != sample.time_group || !fresh(*state.response, *sample.time_ns) || !baseline)
                 emit(event(rule.id, "response_missing_baseline", sample));
             else if (*baseline >= rule.response_threshold) emit(event(rule.id, "response_already_high", sample, &*state.response));
             else if (*sample.time_ns > UINT64_MAX - rule.max_delay_ns) emit(event(rule.id, "response_time_overflow", sample));
-            else state.pending = sample;
+            else schedulePending(i, sample);
         }
         if (response && rising && state.pending && state.pending->time_group == sample.time_group &&
             *sample.time_ns >= *state.pending->time_ns) {
@@ -232,33 +237,42 @@ void ProcessingService::processResponse(const AlignedSample& sample) {
             result.latency_low_ns = delta > uncertainty ? delta - uncertainty : 0;
             result.latency_high_ns = delta > UINT64_MAX - uncertainty ? UINT64_MAX : delta + uncertainty;
             if (*result.latency_high_ns > rule.max_delay_ns || delta < uncertainty) result.outcome = "response_time_ambiguous";
-            emit(std::move(result)); state.pending.reset();
+            emit(std::move(result)); clearPending(i);
         }
         old = sample;
     }
 }
+void ProcessingService::clearPending(std::size_t index) {
+    auto& state = responses_[index];
+    if (state.pending) deadlines_[state.pending->time_group].erase({*state.final_deadline, index});
+    state.pending.reset(); state.final_deadline.reset();
+}
+void ProcessingService::schedulePending(std::size_t index, const AlignedSample& sample) {
+    auto& state = responses_[index]; const auto& rule = config_.responses[index]; state.pending = sample;
+    const auto deadline = *sample.time_ns + rule.max_delay_ns;
+    const auto uncertainty = sample.uncertainty_ns + response_clock_uncertainty_[{rule.response.source, sample.time_group}];
+    state.final_deadline = deadline > UINT64_MAX - uncertainty ? UINT64_MAX : deadline + uncertainty;
+    deadlines_[sample.time_group].emplace(*state.final_deadline, index);
+}
 void ProcessingService::expire(const std::string& group, std::uint64_t time, bool inclusive) {
-    for (std::size_t i = 0; i < responses_.size(); ++i) {
+    const auto found = deadlines_.find(group);
+    if (found == deadlines_.end()) return;
+    auto& due = found->second;
+    while (!due.empty()) {
+        const auto [final_deadline, i] = *due.begin();
+        if (time < final_deadline || (!inclusive && time == final_deadline)) break;
         auto& state = responses_[i]; const auto& rule = config_.responses[i];
-        if (!state.pending || state.pending->time_group != group) continue;
         const auto deadline = *state.pending->time_ns + rule.max_delay_ns;
-        auto uncertainty = state.pending->uncertainty_ns;
-        for (const auto& clock : config_.clocks) if (clock.source == rule.response.source && clock.group == group)
-            uncertainty += clock.uncertainty_ns;
-        const auto final_deadline = deadline > UINT64_MAX - uncertainty ? UINT64_MAX : deadline + uncertainty;
-        if (time < final_deadline || (!inclusive && time == final_deadline)) continue;
         const bool observed = state.response && state.response->time_group == group && fresh(*state.response, deadline);
         auto result = event(rule.id, observed ? "response_timeout" : "response_observation_gap", *state.pending,
             state.response ? &*state.response : nullptr);
-        result.time_ns = deadline; emit(std::move(result)); state.pending.reset();
+        result.time_ns = deadline; emit(std::move(result)); clearPending(i);
     }
 }
 void ProcessingService::advance(const std::string& group, std::uint64_t watermark) {
     std::lock_guard lock(mutex_);
     if (finished_) throw std::logic_error("analysis is already finished");
-    bool known = false;
-    for (const auto& clock : config_.clocks) if (clock.group == group) known = true;
-    if (!known || watermark < watermarks_[group]) throw std::invalid_argument("unknown group or backward watermark");
+    if (!known_groups_.contains(group) || watermark < watermarks_[group]) throw std::invalid_argument("unknown group or backward watermark");
     if (config_.allowed_lateness_ns) {
         auto& pending = reorder_[group];
         if (watermark < pending.closed_before || (pending.closed_through && watermark < *pending.closed_through))
@@ -272,7 +286,7 @@ void ProcessingService::finish() {
     if (finished_) return;
     for (auto& [group_name, group] : reorder_) { (void)group_name; drain(group, UINT64_MAX, true); }
     for (std::size_t i = 0; i < responses_.size(); ++i) if (responses_[i].pending) {
-        emit(event(config_.responses[i].id, "response_unresolved", *responses_[i].pending)); responses_[i].pending.reset();
+        emit(event(config_.responses[i].id, "response_unresolved", *responses_[i].pending)); clearPending(i);
     }
     sink_->flush(); finished_ = true;
 }

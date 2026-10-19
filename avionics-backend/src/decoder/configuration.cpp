@@ -78,17 +78,16 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
     auto metadata = sections.find("dictionary");
     if (metadata == sections.end()) throw std::invalid_argument("missing [dictionary]");
     const auto schema = take(metadata->second, "schema");
-    if (schema != "1" && schema != "2") throw std::invalid_argument("unsupported configuration schema");
+    if (schema != "2") throw std::invalid_argument("unsupported configuration schema; expected 2");
     config.version = take(metadata->second, "version"); empty(metadata->second); sections.erase(metadata);
     if (auto limits = sections.find("processing"); limits != sections.end()) {
         config.max_parameter_states = number<std::size_t>(take(limits->second, "max_parameter_states", "4096"));
         config.max_reorder_samples = number<std::size_t>(take(limits->second, "max_reorder_samples", "8192"));
-        config.allowed_lateness_ns = milliseconds(schema == "2" ? take(limits->second, "allowed_lateness_ms") :
-            take(limits->second, "allowed_lateness_ms", "0"));
+        config.allowed_lateness_ns = milliseconds(take(limits->second, "allowed_lateness_ms"));
         if (!config.max_parameter_states) throw std::invalid_argument("max_parameter_states must be positive");
         if (!config.max_reorder_samples) throw std::invalid_argument("max_reorder_samples must be positive");
         empty(limits->second); sections.erase(limits);
-    } else if (schema == "2") throw std::invalid_argument("schema 2 requires [processing] and explicit allowed_lateness_ms");
+    } else throw std::invalid_argument("schema 2 requires [processing] and explicit allowed_lateness_ms");
     if (auto budget = sections.find("pipeline"); budget != sections.end()) {
         auto& limits = config.pipeline;
         limits.queue_frames = number<std::size_t>(take(budget->second, "queue_frames", "4096"));
@@ -99,6 +98,14 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
         limits.analysis_bytes = number<std::size_t>(take(budget->second, "analysis_bytes", "67108864"));
         limits.max_sources = number<std::size_t>(take(budget->second, "max_sources", "256"));
         limits.validate(); empty(budget->second); sections.erase(budget);
+    }
+    if (auto capture = sections.find("capture"); capture != sections.end()) {
+        config.capture_command_timeout_ms = number<std::uint32_t>(take(capture->second, "command_timeout_ms", "5000"));
+        config.capture_stop_timeout_ms = number<std::uint32_t>(take(capture->second, "stop_timeout_ms", "1000"));
+        if (!config.capture_command_timeout_ms || !config.capture_stop_timeout_ms ||
+            config.capture_command_timeout_ms > 600000 || config.capture_stop_timeout_ms > 600000)
+            throw std::invalid_argument("capture deadlines must be within 1..600000 ms");
+        empty(capture->second); sections.erase(capture);
     }
     std::set<std::string> field_ids;
     for (auto& [section, values] : sections) {

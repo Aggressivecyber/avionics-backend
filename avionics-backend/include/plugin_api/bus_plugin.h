@@ -17,7 +17,7 @@
 extern "C" {
 #endif
 
-#define BUS_ABI_VERSION 1u
+#define BUS_ABI_VERSION 2u
 #define BUS_MAX_PAYLOAD 65536u
 #define BUS_ERROR_CAPACITY 256u
 #define BUS_PROTOCOL_SIMULATED 65535u
@@ -43,6 +43,9 @@ typedef struct BusFrameView {
     const char* origin_source;
     uint64_t origin_generation;
     uint64_t origin_record_index;
+    /* Optional replay identity; zero valid flag means unavailable. */
+    uint32_t origin_session_valid;
+    uint8_t origin_session_id[16];
 } BusFrameView;
 
 typedef struct BusHost {
@@ -74,6 +77,8 @@ typedef struct BusPluginApi {
     void (BUS_CALL *stop)(void*);
     void (BUS_CALL *destroy)(void*);
     int32_t (BUS_CALL *status)(void*, BusAdapterStatus*, BusError*);
+    /* ABI 2: copy the latest worker failure, including asynchronous errors. */
+    int32_t (BUS_CALL *last_error)(void*, BusError*);
 } BusPluginApi;
 
 typedef int32_t (BUS_CALL *BusQueryApi)(uint32_t, BusPluginApi*);

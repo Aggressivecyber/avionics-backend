@@ -1,13 +1,16 @@
 #pragma once
-#include "core/frame_pipeline.hpp"
 #include "core/shared_library.hpp"
 #include "plugin_api/bus_plugin.h"
+#include <cstdint>
+#include <string>
 
 namespace avionics {
 enum class AdapterState { Loaded, Configured, Running, Stopped, Faulted };
 struct AdapterStatus {
     AdapterState state{};
     std::uint64_t generation{}, emitted{}, rejected{}, errors{}, malformed{};
+    std::string failure;
+    std::uint32_t plugin_abi{};
 };
 class IBusAdapter {
 public:
@@ -24,14 +27,5 @@ public:
 private:
     SharedLibrary library_; // API pointers never outlive this library.
     BusPluginApi api_{};
-};
-class PluginManager {
-public:
-    std::unique_ptr<IBusAdapter> create(const std::filesystem::path&, const std::string& source,
-        std::shared_ptr<FramePipeline>);
-    std::size_t loadedCount() const;
-private:
-    mutable std::mutex mutex_;
-    std::map<std::filesystem::path, std::weak_ptr<PluginModule>> modules_;
 };
 }

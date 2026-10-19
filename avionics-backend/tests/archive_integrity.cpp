@@ -8,15 +8,13 @@
 using namespace avionics;
 int main(int argc, char** argv) {
     try {
-        if (argc != 3) throw std::runtime_error("expected legacy fixture and output directory");
+        if (argc != 2) throw std::runtime_error("expected output directory");
         auto check = [](bool condition, const char* message) { if (!condition) throw std::runtime_error(message); };
         Sha256 empty, abc; const std::array<std::uint8_t, 3> letters{'a','b','c'}; abc.update(letters);
         check(hexIdentity(empty.finish()) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", "empty SHA256 vector failed");
         check(hexIdentity(abc.finish()) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "abc SHA256 vector failed");
-        ArchiveReader legacy(argv[1]); RawFrame frame; std::uint64_t count{};
-        while (legacy.next(frame)) { ++count; check(!frame.recording_session_id, "fabricated legacy identity"); }
-        check(count == 17 && legacy.summary().integrity == ArchiveIntegrity::LegacyUnverified, "legacy archive was not preserved as unverified");
-        const auto directory = std::filesystem::path(argv[2]) / ("integrity_" + std::to_string(monotonicNowNs()));
+        RawFrame frame; std::uint64_t count{};
+        const auto directory = std::filesystem::path(argv[1]) / ("integrity_" + std::to_string(monotonicNowNs()));
         std::filesystem::create_directories(directory);
         const auto file = directory / "sealed.avbus";
         const auto origin = newSessionId(); ArchiveSummary written;
@@ -65,7 +63,7 @@ int main(int argc, char** argv) {
         };
         std::thread first(compete), second(compete); first.join(); second.join();
         check(winners == 1 && collisions == 1, "concurrent writers overwrote evidence");
-        std::cout << "legacy_records=17 sealed_records=3 tamper_cases=" << bad_index << " exclusive_writers=1\n";
+        std::cout << "sealed_records=3 tamper_cases=" << bad_index << " exclusive_writers=1\n";
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

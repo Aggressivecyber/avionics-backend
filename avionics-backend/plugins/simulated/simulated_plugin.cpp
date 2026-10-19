@@ -45,5 +45,5 @@ private:
 };
 }
 extern "C" BUS_EXPORT std::int32_t BUS_CALL bus_plugin_query(std::uint32_t abi, BusPluginApi* output) {
-    return Glue<Simulated>::query(abi, output, "simulated-v1");
+    return Glue<Simulated>::query(abi, output, "simulated-v2");
 }

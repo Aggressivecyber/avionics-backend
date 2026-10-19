@@ -1,6 +1,7 @@
 #include "plugin_api/plugin_support.hpp"
 #include "core/archive.hpp"
 #include "core/path.hpp"
+#include <algorithm>
 #include <memory>
 
 namespace {
@@ -46,6 +47,8 @@ private:
             frame.origin_source = has_origin ? recorded.origin_source.c_str() : recorded.source.c_str();
             frame.origin_generation = has_origin ? recorded.origin_generation : recorded.generation;
             frame.origin_record_index = has_origin ? recorded.origin_record_index : recorded.record_index;
+            const auto identity = has_origin ? recorded.origin_session_id : recorded.recording_session_id;
+            if (identity) { frame.origin_session_valid = 1; std::copy(identity->begin(), identity->end(), frame.origin_session_id); }
             emit(frame);
         }
     }
@@ -55,5 +58,5 @@ private:
 };
 }
 extern "C" BUS_EXPORT std::int32_t BUS_CALL bus_plugin_query(std::uint32_t abi, BusPluginApi* output) {
-    return Glue<Replay>::query(abi, output, "replay-v1");
+    return Glue<Replay>::query(abi, output, "replay-v2");
 }

@@ -3,8 +3,16 @@
 #include <stdexcept>
 
 namespace avionics {
-BusManager::BusManager(std::shared_ptr<FramePipeline> pipeline) : pipeline_(std::move(pipeline)) {
+BusManager::BusManager(std::shared_ptr<FramePipeline> pipeline, std::shared_ptr<SessionJournal> journal, CaptureOptions capture)
+    : pipeline_(std::move(pipeline)), journal_(std::move(journal)), capture_options_(std::move(capture)) {
     if (!pipeline_) throw std::invalid_argument("pipeline is required");
+    if (capture_options_.executable.empty()) {
+#if defined(_WIN32)
+        capture_options_.executable = executableDirectory() / "bus_capture_worker.exe";
+#else
+        capture_options_.executable = executableDirectory() / "bus_capture_worker";
+#endif
+    }
 }
 BusManager::~BusManager() {
     // Destruction requires management callers to have joined; stop callbacks first.
@@ -21,17 +29,22 @@ void BusManager::add(const std::string& id, const std::filesystem::path& plugin,
     if (id.empty() || id.size() > 64) throw std::invalid_argument("instance id must have 1..64 characters");
     for (unsigned char c : id) if (!std::isalnum(c) && c != '_' && c != '-') throw std::invalid_argument("invalid instance id");
     auto entry = std::make_shared<Entry>();
-    entry->adapter = plugins_.create(plugin, id, pipeline_);
+    entry->adapter = std::make_unique<CaptureAdapter>(capture_options_, plugin, id, pipeline_, journal_);
     entry->adapter->configure(config);
     pipeline_->reserveSource(id);
     std::lock_guard lock(mutex_);
     if (!entries_.emplace(id, entry).second) throw std::invalid_argument("duplicate instance id: " + id);
+    if (journal_) {
+        const auto utf8 = std::filesystem::absolute(plugin).u8string();
+        journal_->write(id, "configured", entry->adapter->status(), std::string(utf8.begin(), utf8.end()), config);
+    }
 }
 void BusManager::start(const std::string& id) {
     auto entry = find(id);
     std::lock_guard lock(entry->mutex);
     if (entry->removed) throw std::logic_error("instance was removed");
     entry->adapter->start(next_generation_++);
+    if (journal_) journal_->write(id, "started", entry->adapter->status());
 }
 void BusManager::drain(const std::string& id) {
     if (!pipeline_->drainSource(id, std::chrono::seconds(5)))
@@ -42,26 +55,33 @@ void BusManager::stop(const std::string& id) {
     std::lock_guard lock(entry->mutex);
     if (entry->removed) throw std::logic_error("instance was removed");
     entry->adapter->stop(); drain(id);
+    if (journal_) journal_->write(id, "stopped", entry->adapter->status());
 }
 void BusManager::remove(const std::string& id) {
     auto entry = find(id);
     std::lock_guard lock(entry->mutex);
     if (entry->removed) throw std::logic_error("instance was removed");
     entry->adapter->stop(); drain(id);
+    if (journal_) journal_->write(id, "removed", entry->adapter->status());
     entry->removed = true; entry->adapter.reset();
     std::lock_guard map_lock(mutex_);
     entries_.erase(id);
 }
 void BusManager::replace(const std::string& id, const std::filesystem::path& plugin, const std::string& config) {
+    auto entry = find(id);
     // Load and configure before touching the running instance. Some hardware
     // plugins must defer exclusive device acquisition until start().
-    auto candidate = plugins_.create(plugin, id, pipeline_);
+    auto candidate = std::make_unique<CaptureAdapter>(capture_options_, plugin, id, pipeline_, journal_);
     candidate->configure(config);
-    auto entry = find(id);
+    if (journal_) {
+        const auto utf8 = std::filesystem::absolute(plugin).u8string();
+        journal_->write(id, "replacement_prepared", candidate->status(), std::string(utf8.begin(), utf8.end()), config);
+    }
     std::lock_guard lock(entry->mutex);
     if (entry->removed) throw std::logic_error("instance was removed");
     const bool was_running = entry->adapter->status().state == AdapterState::Running;
     entry->adapter->stop(); drain(id);
+    if (journal_) journal_->write(id, "replaced_previous", entry->adapter->status());
     if (was_running) {
         try { candidate->start(next_generation_++); }
         catch (const std::exception& start_error) {
@@ -76,11 +96,20 @@ void BusManager::replace(const std::string& id, const std::filesystem::path& plu
         }
     }
     entry->adapter = std::move(candidate); // old workers joined before module release.
+    if (journal_) journal_->write(id, "replaced", entry->adapter->status());
 }
 AdapterStatus BusManager::status(const std::string& id) const {
     auto entry = find(id);
     std::lock_guard lock(entry->mutex);
     if (entry->removed) throw std::logic_error("instance was removed");
-    return entry->adapter->status();
+    const auto status = entry->adapter->status();
+    return status;
+}
+void BusManager::shutdown() {
+    for (;;) {
+        std::string id;
+        { std::lock_guard lock(mutex_); if (entries_.empty()) break; id = entries_.begin()->first; }
+        remove(id);
+    }
 }
 }

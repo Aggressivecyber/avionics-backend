@@ -54,6 +54,7 @@ struct BackendConfiguration {
     std::size_t max_reorder_samples{8192};
     std::uint64_t allowed_lateness_ns{};
     PipelineLimits pipeline;
+    std::uint32_t capture_command_timeout_ms{5000}, capture_stop_timeout_ms{1000};
     std::vector<FieldDefinition> fields;
     std::vector<ClockDefinition> clocks;
     std::vector<ConsistencyDefinition> consistency;

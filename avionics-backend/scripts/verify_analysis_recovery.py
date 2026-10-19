@@ -26,8 +26,8 @@ def main():
     suffix = ".exe" if os.name == "nt" else ""
     plugin_suffix = ".dll" if os.name == "nt" else ".so"
     env = os.environ.copy()
-    if os.name == "nt":
-        env["PATH"] = r"C:\msys64\mingw64\bin;" + env.get("PATH", "")
+    if os.name == "nt" and "AVIONICS_MINGW_BIN" in env:
+        env["PATH"] = env["AVIONICS_MINGW_BIN"] + ";" + env.get("PATH", "")
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     archive = run / "capture.avbus"
     process = subprocess.Popen([str(binaries / f"bus_backend{suffix}"), "--interactive", str(archive), str(failing)],
@@ -40,7 +40,7 @@ def main():
                             "start sensor_a\nstart sensor_b\n")
         process.stdin.flush()
         deadline = time.monotonic() + 5
-        while not (archive.exists() and archive.stat().st_size > 8):
+        while not (archive.exists() and archive.stat().st_size > 512):
             if process.poll() is not None or time.monotonic() >= deadline:
                 raise RuntimeError("capture did not produce raw data within the verification deadline")
             time.sleep(0.01)
@@ -60,6 +60,9 @@ def main():
     (run / "recomputed.log").write_text(result.stdout + result.stderr, encoding="utf-8")
     summary = json.loads((recovery / "summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "complete" and summary["records"] == accepted and summary["samples"] == accepted
+    live_summary = json.loads(Path(str(archive) + ".session.json").read_text(encoding="utf-8"))
+    assert live_summary["analysis_status"] == "incomplete" and live_summary["analysis_cursor"] == completed
+    assert live_summary["analysis_first_missing"] is not None and live_summary["archive"]["integrity"] == "sealed"
     receipt = {"live_exit": process.returncode, "accepted": accepted, "raw_records_recovered": summary["records"],
                "raw_dropped": dropped, "analysis_input_completed_before_failure": completed,
                "offline_status": summary["status"], "offline_samples": summary["samples"]}
