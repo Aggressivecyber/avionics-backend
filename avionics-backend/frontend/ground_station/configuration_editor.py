@@ -211,6 +211,7 @@ class ConfigurationEditor(QWidget):
         self.name = QLineEdit(name or TITLES[kind])
         self.name.setReadOnly(not bool(name))
         self.name.setToolTip("参数或规则的标识名称。修改参数名称后，也要修改引用它的规则。")
+        self.name.textChanged.connect(lambda text: self.set_dirty(True))
         self.name.editingFinished.connect(self.rename_section)
         self.form.addRow("名称", self.name)
         values = self.document[self.section]
