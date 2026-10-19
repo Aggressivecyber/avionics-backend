@@ -17,6 +17,10 @@ struct AlignedSample {
 struct EvidenceRef {
     std::string source, parameter, decoder_version;
     std::uint64_t generation{}, origin_generation{}, record_index{}, time_ns{};
+    std::optional<SessionId> recording_session_id, origin_session_id;
+    std::optional<ContentDigest> configuration_sha256;
+    std::string origin_source;
+    std::uint64_t origin_record_index{};
 };
 struct CorrelationResult {
     std::string rule, outcome, time_group;

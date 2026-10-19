@@ -3,6 +3,7 @@
 #include "core/pipeline_limits.hpp"
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <optional>
 #include <tuple>
 
@@ -40,8 +41,15 @@ struct ResponseDefinition {
     double command_threshold{}, response_threshold{};
     std::uint64_t max_delay_ns{};
 };
+struct ConfigurationDocument {
+    std::string bytes;
+    ContentDigest sha256;
+    void save(const std::filesystem::path&) const;
+};
 struct BackendConfiguration {
     std::string version;
+    std::shared_ptr<const ConfigurationDocument> document;
+    std::optional<SessionId> recording_session_id;
     std::size_t max_parameter_states{4096};
     std::size_t max_reorder_samples{8192};
     std::uint64_t allowed_lateness_ns{};

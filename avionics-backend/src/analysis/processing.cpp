@@ -26,7 +26,9 @@ std::optional<double> numeric(const ParameterValue& value) {
 }
 EvidenceRef evidence(const AlignedSample& value) {
     return {value.sample.source, value.sample.parameter_id, value.sample.decoder_version, value.sample.generation,
-        value.sample.origin_generation, value.sample.raw_record_index, value.time_ns.value_or(0)};
+        value.sample.origin_generation, value.sample.raw_record_index, value.time_ns.value_or(0),
+        value.sample.recording_session_id, value.sample.origin_session_id, value.sample.configuration_sha256,
+        value.sample.origin_source, value.sample.origin_record_index};
 }
 bool fresh(const AlignedSample& sample, std::uint64_t now) {
     if (!sample.usable() || !sample.time_ns || now < *sample.time_ns) return false;

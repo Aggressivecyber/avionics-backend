@@ -47,6 +47,10 @@ std::vector<ParameterSample> DictionaryDecoder::decode(const RawFrame& frame) {
         sample.clock_domain = frame.clock_domain; sample.raw_record_index = frame.record_index;
         sample.sequence = frame.sequence; sample.sequence_step = field.sequence_step; sample.max_age_ns = field.max_age_ns;
         sample.decoder_version = config_.version; sample.valid = (frame.flags & BUS_FRAME_INVALID) == 0;
+        sample.recording_session_id = frame.recording_session_id ? frame.recording_session_id : config_.recording_session_id;
+        sample.origin_session_id = frame.origin_session_id; sample.origin_source = frame.origin_source;
+        sample.origin_record_index = frame.origin_record_index;
+        if (config_.document) sample.configuration_sha256 = config_.document->sha256;
         try {
             const auto raw = bits(frame, field.bit_offset, field.bit_width, field.big_endian);
             switch (field.type) {

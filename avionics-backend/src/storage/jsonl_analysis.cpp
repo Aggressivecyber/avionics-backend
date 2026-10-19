@@ -1,4 +1,5 @@
 #include "core/processing.hpp"
+#include "core/json.hpp"
 #include <cmath>
 #include <iomanip>
 #include <locale>
@@ -7,15 +8,7 @@
 
 namespace avionics {
 namespace {
-std::string json(const std::string& text) {
-    std::ostringstream output; output << '"';
-    for (unsigned char c : text) {
-        if (c == '"' || c == '\\') output << '\\' << c;
-        else if (c < 32) output << "\\u" << std::hex << std::setw(4) << std::setfill('0') << static_cast<unsigned>(c) << std::dec;
-        else output << c;
-    }
-    output << '"'; return output.str();
-}
+const auto& json = jsonString;
 void value(std::ostream& out, const ParameterValue& item) {
     std::visit([&](const auto& data) {
         using T = std::decay_t<decltype(data)>;
@@ -36,7 +29,11 @@ JsonlAnalysisSink::JsonlAnalysisSink(const std::filesystem::path& directory) {
 }
 void JsonlAnalysisSink::sample(const AlignedSample& aligned) {
     const auto& s = aligned.sample;
-    parameters_ << "{\"schema\":1,\"source\":" << json(s.source) << ",\"parameter\":" << json(s.parameter_id)
+    parameters_ << "{\"schema\":2,\"source\":" << json(s.source) << ",\"parameter\":" << json(s.parameter_id)
+        << ",\"recording_session_id\":" << jsonIdentity(s.recording_session_id)
+        << ",\"origin_session_id\":" << jsonIdentity(s.origin_session_id)
+        << ",\"configuration_sha256\":" << jsonIdentity(s.configuration_sha256)
+        << ",\"origin_source\":" << json(s.origin_source) << ",\"origin_record_index\":" << s.origin_record_index
         << ",\"generation\":" << s.generation << ",\"origin_generation\":" << s.origin_generation
         << ",\"record_index\":" << s.raw_record_index << ",\"sequence\":" << s.sequence
         << ",\"capture_time_ns\":" << s.capture_time_ns << ",\"ingest_time_ns\":" << s.ingest_time_ns
@@ -52,7 +49,7 @@ void JsonlAnalysisSink::sample(const AlignedSample& aligned) {
     if (!parameters_) throw std::runtime_error("parameter output write failed");
 }
 void JsonlAnalysisSink::result(const CorrelationResult& r) {
-    events_ << "{\"schema\":1,\"rule\":" << json(r.rule) << ",\"outcome\":" << json(r.outcome)
+    events_ << "{\"schema\":2,\"rule\":" << json(r.rule) << ",\"outcome\":" << json(r.outcome)
         << ",\"time_group\":" << json(r.time_group) << ",\"time_ns\":" << r.time_ns << ",\"metric\":";
     if (r.metric && std::isfinite(*r.metric)) events_ << *r.metric; else events_ << "null";
     events_ << ",\"latency_low_ns\":"; if (r.latency_low_ns) events_ << *r.latency_low_ns; else events_ << "null";
@@ -62,6 +59,10 @@ void JsonlAnalysisSink::result(const CorrelationResult& r) {
         if (i) events_ << ',';
         const auto& e = r.evidence[i];
         events_ << "{\"source\":" << json(e.source) << ",\"parameter\":" << json(e.parameter)
+            << ",\"recording_session_id\":" << jsonIdentity(e.recording_session_id)
+            << ",\"origin_session_id\":" << jsonIdentity(e.origin_session_id)
+            << ",\"configuration_sha256\":" << jsonIdentity(e.configuration_sha256)
+            << ",\"origin_source\":" << json(e.origin_source) << ",\"origin_record_index\":" << e.origin_record_index
             << ",\"generation\":" << e.generation << ",\"origin_generation\":" << e.origin_generation
             << ",\"record_index\":" << e.record_index << ",\"time_ns\":" << e.time_ns
             << ",\"dictionary_version\":" << json(e.decoder_version) << '}';

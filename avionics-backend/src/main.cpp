@@ -3,6 +3,7 @@
 #include "core/path.hpp"
 #include "core/decoder_registry.hpp"
 #include "core/processing.hpp"
+#include "core/json.hpp"
 #include <iostream>
 #include <sstream>
 #include <thread>
@@ -62,19 +63,24 @@ int main(int argc, char** argv) {
             std::filesystem::create_directories("runs");
             archive = std::filesystem::path("runs") / ("demo_" + std::to_string(monotonicNowNs()) + ".avbus");
         } else archive = pathFromUtf8(argv[2]);
+        auto session_path = archive; session_path += ".session.json";
+        if (std::filesystem::exists(session_path)) throw std::runtime_error("session metadata already exists");
+        std::optional<BackendConfiguration> configuration;
+        if (argc == 4) configuration = BackendConfiguration::load(pathFromUtf8(argv[3]));
+        auto recorder = std::make_unique<ArchiveWriter>(archive);
+        const auto* recording = recorder.get();
         auto analyzer = std::make_shared<RuleAnalyzer>(22.0);
         std::shared_ptr<ProcessingService> service;
         PipelineLimits pipeline_limits;
         std::shared_ptr<IParameterConsumer> consumer = analyzer;
         std::unique_ptr<IParameterDecoder> decoder;
         if (argc == 4) {
-            const auto config_path = pathFromUtf8(argv[3]);
-            const auto config = BackendConfiguration::load(config_path);
+            auto& config = *configuration;
+            config.recording_session_id = recording->summary().session_id;
             pipeline_limits = config.pipeline;
-            if (std::filesystem::exists(archive)) throw std::runtime_error("raw archive already exists");
             auto output = archive; output += ".analysis";
             auto sink = std::make_shared<JsonlAnalysisSink>(output);
-            std::filesystem::copy_file(config_path, output / "configuration.ini");
+            config.document->save(output / "configuration.ini");
             service = std::make_shared<ProcessingService>(config, sink);
             consumer = service; decoder = std::make_unique<DictionaryDecoder>(config);
             std::cout << "analysis_output=" << output.string() << '\n';
@@ -83,7 +89,7 @@ int main(int argc, char** argv) {
             decoders->registerDecoder(BUS_PROTOCOL_SIMULATED, std::make_shared<SimulatedDecoder>());
             decoder = std::move(decoders);
         }
-        auto pipeline = std::make_shared<FramePipeline>(pipeline_limits, std::make_unique<ArchiveWriter>(archive),
+        auto pipeline = std::make_shared<FramePipeline>(pipeline_limits, std::move(recorder),
             std::move(decoder), consumer);
         std::cout << "archive=" << std::filesystem::absolute(archive).string() << '\n';
         {
@@ -147,6 +153,16 @@ int main(int argc, char** argv) {
         } // all plugin workers joined before draining/closing the pipeline.
         pipeline->shutdown();
         printStats(*pipeline, *analyzer, service.get());
-        return pipeline->stats().healthy ? (pipeline->stats().analysis_healthy ? 0 : 3) : 1;
+        const auto final = pipeline->stats();
+        std::ofstream metadata(session_path, std::ios::binary);
+        metadata << "{\"schema\":2,\"archive\":"; writeArchiveSummary(metadata, recording->summary());
+        metadata << ",\"recording_healthy\":" << (final.healthy ? "true" : "false")
+            << ",\"configuration_sha256\":" << (configuration ? jsonString(hexIdentity(configuration->document->sha256)) : "null")
+            << ",\"analysis_status\":" << jsonString(final.analysis_healthy ? "complete" : "incomplete")
+            << ",\"analysis_failure\":" << jsonString(final.analysis_failure)
+            << ",\"recording_failure\":" << jsonString(final.failure)
+            << ",\"accepted\":" << final.accepted << ",\"recorded\":" << final.recorded << ",\"dropped\":" << final.dropped << "}\n";
+        metadata.close(); if (!metadata) throw std::runtime_error("cannot write session metadata");
+        return final.healthy ? (final.analysis_healthy ? 0 : 3) : 1;
     } catch (const std::exception& e) { std::cerr << "fatal: " << e.what() << '\n'; return 1; }
 }

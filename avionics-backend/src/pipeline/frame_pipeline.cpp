@@ -120,7 +120,7 @@ void FramePipeline::run() noexcept {
                 analysis_queue_.push_back(std::move(frame)); analysis_bytes_ += bytes; analysis_available_.notify_one();
             }
         }
-        recorder_->flush(); // stream flush; does not promise power-loss durability.
+        recorder_->finish(); // seals a successful archive; no power-loss durability claim.
     } catch (const std::exception& e) { fail(e.what()); }
       catch (...) { fail("unknown recording failure"); }
 }

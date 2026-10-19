@@ -4,6 +4,7 @@ Runs the public configured CLI, replaces a live source, then compares its JSONL
 outputs byte-for-byte with offline analysis of the captured raw archive.
 """
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -74,9 +75,18 @@ def main():
         assert all(e["record_index"] > 0 for e in event["evidence"])
     summary = json.loads((offline / "summary.json").read_text(encoding="utf-8"))
     assert summary["status"] == "complete" and summary["samples"] == len(samples)
+    metadata = json.loads(Path(str(archive) + ".session.json").read_text(encoding="utf-8"))
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    config_digest = hashlib.sha256((offline / "configuration.ini").read_bytes()).hexdigest()
+    assert summary["archive"] == metadata["archive"]
+    assert summary["archive"]["integrity"] == "sealed" and summary["archive"]["file_sha256"] == digest
+    assert summary["configuration_sha256"] == metadata["configuration_sha256"] == config_digest
+    assert all(s["configuration_sha256"] == config_digest and
+               s["recording_session_id"] == summary["archive"]["recording_session_id"] for s in samples)
     check = {"live_exit": process.returncode, "offline_exit": result.returncode,
              "samples": len(samples), "results": summary["results"], "rejected": summary["rejected"],
              "byte_identical_parameters": True, "byte_identical_events": True,
+             "archive_sha256_verified_by_python": True, "configuration_sha256_verified_by_python": True,
              "changed_source_generations": 2, "unaffected_source_generations": 1}
     (run / "verification.json").write_text(json.dumps(check, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(check))

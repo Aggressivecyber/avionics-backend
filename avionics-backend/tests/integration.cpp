@@ -213,7 +213,7 @@ void testArchive(const std::filesystem::path& dir) {
     auto original = frame("test", -12000, 3);
     original.record_index = 17; original.origin_source = "original";
     original.origin_generation = 7; original.origin_record_index = 9;
-    { ArchiveWriter writer(path); writer.write(original); writer.flush(); }
+    { ArchiveWriter writer(path); writer.write(original); writer.finish(); }
     ArchiveReader reader(path);
     RawFrame restored;
     check(reader.next(restored) && !reader.next(restored), "archive record count mismatch");
@@ -227,11 +227,11 @@ void testArchive(const std::filesystem::path& dir) {
     { std::fstream file(corrupt, std::ios::in | std::ios::out | std::ios::binary);
       file.seekg(-1, std::ios::end); char byte{}; file.read(&byte, 1); byte ^= 0x01;
       file.seekp(-1, std::ios::end); file.write(&byte, 1); }
-    throws([&] { ArchiveReader bad(corrupt); bad.next(restored); }, "CRC corruption must be detected");
+    throws([&] { ArchiveReader bad(corrupt); while (bad.next(restored)) {} }, "CRC corruption must be detected");
     auto truncated = dir / "truncated.avbus";
     std::filesystem::copy_file(path, truncated);
     std::filesystem::resize_file(truncated, std::filesystem::file_size(truncated) - 1);
-    throws([&] { ArchiveReader bad(truncated); bad.next(restored); }, "truncated body must be detected");
+    throws([&] { ArchiveReader bad(truncated); while (bad.next(restored)) {} }, "truncated body must be detected");
     auto short_header = dir / "short_header.avbus";
     std::filesystem::copy_file(path, short_header);
     std::filesystem::resize_file(short_header, 10);

@@ -86,7 +86,7 @@ ctest --test-dir build --output-on-failure
 ./build/bin/bus_backend --demo ./build/bin/bus_simulated.so
 ```
 
-核心和内置插件仅依赖 C++ 标准库、系统线程与动态库加载接口，没有下载依赖的步骤。
+Windows 的 SHA-256 和会话随机身份使用系统 CNG；Linux 构建另需 OpenSSL Crypto 开发包。其余依赖为 C++ 标准库、系统线程与动态库加载接口，没有构建时下载依赖的步骤。
 
 ## 交互式管理
 

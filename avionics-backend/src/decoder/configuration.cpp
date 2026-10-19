@@ -44,8 +44,15 @@ Selector selector(Values& values, const std::string& prefix) {
 }
 }
 BackendConfiguration BackendConfiguration::load(const std::filesystem::path& path) {
-    std::ifstream input(path);
-    if (!input) throw std::invalid_argument("cannot open backend configuration");
+    std::ifstream file(path, std::ios::binary);
+    if (!file) throw std::invalid_argument("cannot open backend configuration");
+    std::ostringstream bytes; bytes << file.rdbuf();
+    if (file.bad() || !bytes) throw std::invalid_argument("failed to read configuration");
+    auto document = std::make_shared<ConfigurationDocument>(); document->bytes = bytes.str();
+    Sha256 hash;
+    hash.update({reinterpret_cast<const std::uint8_t*>(document->bytes.data()), document->bytes.size()});
+    document->sha256 = hash.finish();
+    std::istringstream input(document->bytes);
     std::map<std::string, Values> sections;
     Values* current = nullptr;
     std::string line;
@@ -67,7 +74,7 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
         }
     }
     if (input.bad()) throw std::invalid_argument("failed to read configuration");
-    BackendConfiguration config;
+    BackendConfiguration config; config.document = std::move(document);
     auto metadata = sections.find("dictionary");
     if (metadata == sections.end()) throw std::invalid_argument("missing [dictionary]");
     const auto schema = take(metadata->second, "schema");
@@ -194,5 +201,9 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
     for (const auto& rule : config.consistency) { validate_selector(rule.left); validate_selector(rule.right); distinct(rule.left, rule.right); }
     for (const auto& rule : config.responses) { validate_selector(rule.command); validate_selector(rule.response); distinct(rule.command, rule.response); }
     return config;
+}
+void ConfigurationDocument::save(const std::filesystem::path& path) const {
+    std::ofstream output(path, std::ios::binary); output << bytes; output.close();
+    if (!output) throw std::runtime_error("cannot write configuration snapshot");
 }
 }

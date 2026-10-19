@@ -64,6 +64,9 @@ void testConfiguration(const std::filesystem::path& path, const std::filesystem:
     reject(original + "\n[pipeline]\nsource_frames=8192\n");
     reject(original + "\n[pipeline]\nqueue_bytes=0\n");
     const auto valid = BackendConfiguration::load(path);
+    const auto snapshot = output / "snapshot.ini"; valid.document->save(snapshot);
+    std::ifstream snapshot_input(snapshot, std::ios::binary); std::ostringstream saved; saved << snapshot_input.rdbuf();
+    check(saved.str() == valid.document->bytes, "configuration snapshot was not the exact parsed bytes");
     check(valid.fields.size() == 4 && valid.responses.size() == 1 && valid.consistency.size() == 1, "configuration lost rules");
     const auto budgeted = output / "budgeted.ini";
     { std::ofstream out(budgeted); out << original << "\n[processing]\nmax_parameter_states=8192\n"; }

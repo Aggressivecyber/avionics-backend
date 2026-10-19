@@ -14,8 +14,14 @@ target_include_directories(project_options INTERFACE "${PROJECT_SOURCE_DIR}/incl
 target_compile_options(project_options INTERFACE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion;-Wshadow>)
 
-add_library(bus_archive STATIC src/storage/archive.cpp)
+add_library(bus_archive STATIC src/storage/archive.cpp src/storage/identity.cpp)
 target_link_libraries(bus_archive PUBLIC project_options)
+if(WIN32)
+    target_link_libraries(bus_archive PUBLIC bcrypt)
+else()
+    find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+    target_link_libraries(bus_archive PUBLIC OpenSSL::Crypto)
+endif()
 
 add_library(bus_core STATIC
     src/platform/shared_library.cpp
@@ -48,6 +54,10 @@ target_link_libraries(bus_analyze PRIVATE bus_core)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(archive_integrity_tests tests/archive_integrity.cpp)
+    target_link_libraries(archive_integrity_tests PRIVATE bus_archive Threads::Threads)
+    add_test(NAME archive_integrity COMMAND archive_integrity_tests
+        "${PROJECT_SOURCE_DIR}/tests/fixtures/v0.2-correlation.avbus" "${CMAKE_BINARY_DIR}/test-output")
     add_executable(configuration_benchmark tests/configuration_benchmark.cpp)
     target_link_libraries(configuration_benchmark PRIVATE bus_core)
     add_bus_plugin(bus_incompatible tests/incompatible_plugin.cpp)

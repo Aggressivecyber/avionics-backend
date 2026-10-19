@@ -1,6 +1,8 @@
 #pragma once
+#include "core/identity.hpp"
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
@@ -18,6 +20,7 @@ struct RawFrame {
     std::string origin_source;
     std::uint64_t origin_generation{}, origin_record_index{};
     std::vector<std::uint8_t> payload;
+    std::optional<SessionId> recording_session_id, origin_session_id;
 };
 struct EnumValue { std::int64_t code{}; std::string label; };
 using ParameterValue = std::variant<std::int64_t, std::uint64_t, double, bool, EnumValue>;
@@ -29,6 +32,10 @@ struct ParameterSample {
     std::uint32_t clock_domain{};
     ParameterValue value{0.0};
     bool valid{};
+    std::optional<SessionId> recording_session_id, origin_session_id;
+    std::optional<ContentDigest> configuration_sha256;
+    std::string origin_source;
+    std::uint64_t origin_record_index{};
 };
 struct AnalysisEvent {
     std::string rule_id, source, parameter_id, description;
