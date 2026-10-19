@@ -1,5 +1,7 @@
 # 机载总线监控后端
 
+当前开发版本为地面总线监测工作台v0.5.0，包含Qt前端、独立采集进程和1553B软件监控输入。使用入口见 [当前说明](avionics-backend/README.md)、[当前架构](avionics-backend/docs/architecture.md) 和 [1553B软件验证](avionics-backend/docs/mil1553b-software.md)。下文为最初v0.2阶段说明。
+
 C++20 / g++ 的面向对象后端工程，源码位于 [`avionics-backend/`](avionics-backend/)。提供模拟采集、采集插件热替换、原始记录与回放、配置化参数解码及关联分析。
 
 本轮完成多协议扩展的抽象接口：默认自动识别，允许按来源和通道手动指定协议。具体识别算法、路由器和真实协议解析器留待后续实现；当前没有真实硬件依赖。

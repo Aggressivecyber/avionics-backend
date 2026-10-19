@@ -1,6 +1,10 @@
-# 地面总线监测工作台 · v0.4.2
+# 地面总线监测工作台 · v0.5.0
 
-面向地面试验、总线监测和数据分析的 Qt 6 桌面前端与 C++20 后端。当前可运行模拟采集、回放、配置化参数解码、事件时间处理和关联分析。真实总线协议、采集卡 SDK、ICD、时钟同步与设备负载验收尚待选型。
+面向地面试验、总线监测和数据分析的 Qt 6 桌面前端与 C++20 后端。当前支持模拟采集、回放、配置化参数解码、事件时间处理和关联分析，并新增1553B合成监控记录的协议处理。第一种目标总线已确定为 MIL-STD-1553B；采集卡 SDK、设备 ICD、时钟同步与设备负载验收待选型。
+
+## 1553B软件验证
+
+在插件中心启用“1553B软件验证插件”，会自动选择配套字典并准备 `bus1553` 来源；点击“开始采集”后生成 BC→RT、RT→BC、RT→RT 及基础广播记录。七路显示参数包括指令、反馈、温度、广播计数及协议诊断。全部输入和工程量定义为软件合成，模式指令和 RT→RT Busy/Message Error 响应暂未支持。输入格式、字典筛选和验收步骤见 [1553B软件验证](docs/mil1553b-software.md)。
 
 项目尚未上线，按用户要求仅保留插件 ABI 2、归档 2、配置 schema 2、结果 schema 2。旧插件统一重做，旧试验输入重新生成。当前版本、源码提交和格式版本可通过 `--version` 查询。
 
@@ -74,12 +78,12 @@ python scripts/verify_capture_cli.py --build build-gcc-release
 
 ## 设备插件与发布
 
-[插件契约](docs/plugin-contract.md)、[采集隔离](docs/capture-isolation.md)、[事件时间](docs/event-time.md)、[归档格式](docs/archive-v2.md)。协议扩展接口仍处于契约阶段，自动识别器与实际协议解析器尚未实现，见 [协议抽象](docs/protocol-abstractions.md)。
+[插件契约](docs/plugin-contract.md)、[采集隔离](docs/capture-isolation.md)、[事件时间](docs/event-time.md)、[归档格式](docs/archive-v2.md)。协议接口已接入1553B监控记录的自动/手动选择、消息解析与参数解码。自动模式识别已声明格式的软件监控封装，见 [协议接口](docs/protocol-abstractions.md) 和 [1553B范围](docs/mil1553b-software.md)。
 
 源码提交后重新配置并构建，确保 `--version` 无 `dirty` 标记，再运行：
 
 ```powershell
-python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/v0.4.2
+python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/v0.5.0
 ```
 
 便携包包含宿主、采集进程、分析程序、两个内置插件、匹配的 MinGW 运行库及许可证、配置、文档、源码导出和 SHA-256 清单。发布使用独立目录，退出旧会话后切换目录；原始归档和旧目录保留，便于回退开发改动。失败替换会尝试恢复旧实例并明确报告结果。

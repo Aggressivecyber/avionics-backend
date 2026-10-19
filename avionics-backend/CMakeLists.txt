@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(avionics_backend VERSION 0.4.2 LANGUAGES C CXX)
+project(avionics_backend VERSION 0.5.0 LANGUAGES C CXX)
 
 set(AVIONICS_BUILD_REVISION "" CACHE STRING "Commit identity when building a source export without Git")
 if(NOT AVIONICS_BUILD_REVISION)
@@ -52,6 +52,7 @@ add_library(bus_core STATIC
     src/decoder/simulated_decoder.cpp
     src/decoder/configuration.cpp
     src/decoder/dictionary_decoder.cpp
+    src/decoder/mil1553b.cpp
     src/analysis/processing.cpp
     src/control_console.cpp
     src/storage/jsonl_analysis.cpp
@@ -72,6 +73,7 @@ function(add_bus_plugin name source)
 endfunction()
 add_bus_plugin(bus_simulated plugins/simulated/simulated_plugin.cpp)
 add_bus_plugin(bus_replay plugins/replay/replay_plugin.cpp)
+add_bus_plugin(bus_mil1553b_simulated plugins/mil1553b_simulated/mil1553b_plugin.cpp)
 target_link_libraries(bus_replay PRIVATE bus_archive)
 
 add_executable(bus_backend src/main.cpp)
@@ -118,6 +120,9 @@ if(BUILD_TESTING)
     add_executable(protocol_contract_tests tests/protocol_contract.cpp)
     target_link_libraries(protocol_contract_tests PRIVATE bus_core)
     add_test(NAME protocol_contract COMMAND protocol_contract_tests)
+    add_executable(mil1553b_tests tests/mil1553b.cpp)
+    target_link_libraries(mil1553b_tests PRIVATE bus_core)
+    add_test(NAME mil1553b_protocol COMMAND mil1553b_tests "${PROJECT_SOURCE_DIR}/config/mil1553b-demo.ini" "${CMAKE_BINARY_DIR}/1553b-test-output")
     if(AVIONICS_TEST_QT_FRONTEND)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
         add_test(NAME qt_frontend COMMAND "${Python3_EXECUTABLE}" -B

@@ -62,7 +62,7 @@ int main() {
         check(handler->stream() == first, "derived handler cannot retain stream identity");
         check(handler->parse(original).status == ProtocolParseStatus::NotAttempted, "empty parsing must not imply success");
         std::cout << "PASS abstract interfaces, existing decoder inheritance, virtual destruction, auto/manual policy and stream identity\n";
-        std::cout << "No concrete protocol or recognition algorithm was tested or implemented.\n";
+        std::cout << "This target checks interface contracts; concrete 1553B cases run in mil1553b_protocol.\n";
         return 0;
     } catch (const std::exception& e) { std::cerr << "CONTRACT FAILURE: " << e.what() << '\n'; return 1; }
 }

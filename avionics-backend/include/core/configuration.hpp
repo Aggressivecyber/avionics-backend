@@ -1,6 +1,7 @@
 #pragma once
 #include "core/parameter_interfaces.hpp"
 #include "core/pipeline_limits.hpp"
+#include "core/protocol_types.hpp"
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -9,6 +10,10 @@
 
 namespace avionics {
 enum class FieldType { Signed, Unsigned, Float64, Boolean, Enumeration };
+struct Mil1553BFieldSelector {
+    std::uint32_t rt_address{}, subaddress{};
+    bool transmit{};
+};
 struct FieldDefinition {
     std::string id, source, unit;
     std::uint32_t protocol{}, channel{}, bit_offset{}, bit_width{};
@@ -18,6 +23,12 @@ struct FieldDefinition {
     std::optional<std::uint32_t> valid_bit;
     std::map<std::int64_t, std::string> enum_values;
     std::uint64_t max_age_ns{}, sequence_step{};
+    std::optional<Mil1553BFieldSelector> mil1553b;
+};
+struct ProtocolInputDefinition {
+    StreamAddress address;
+    ProtocolSelection selection;
+    ProtocolInputDescriptor input;
 };
 struct ClockDefinition {
     std::string source, group;
@@ -56,6 +67,7 @@ struct BackendConfiguration {
     PipelineLimits pipeline;
     std::uint32_t capture_command_timeout_ms{5000}, capture_stop_timeout_ms{1000};
     std::vector<FieldDefinition> fields;
+    std::vector<ProtocolInputDefinition> protocol_inputs;
     std::vector<ClockDefinition> clocks;
     std::vector<ConsistencyDefinition> consistency;
     std::vector<ResponseDefinition> responses;

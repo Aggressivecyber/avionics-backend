@@ -87,6 +87,8 @@ struct ProtocolFrameReference {
     ProtocolStreamKey stream;
     std::uint64_t record_index{}, sequence{}, capture_time_ns{};
     std::uint32_t clock_domain{};
+    std::uint64_t ingest_time_ns{}, origin_record_index{};
+    std::optional<SessionId> recording_session_id, origin_session_id;
 };
 using ProtocolMetadataValue = std::variant<std::int64_t, std::uint64_t, bool, std::string>;
 struct ProtocolMetadataField {

@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from .backend import BackendClient, read_jsonl_tail, writable_data_path
+from . import __version__
 from .models import EventModel, ParameterModel, TrendPlot
 from .plugin_center import PluginCenter, ReplaySetupDialog
 from .relations_page import RelationsPage
@@ -158,7 +159,7 @@ class MainWindow(QMainWindow):
         self.offline_stdout = bytearray()
         self.offline_stderr = bytearray()
         self.offline_summary = None
-        self.setWindowTitle("AEROBUS v0.4.2 · 插件与数据关联工作台")
+        self.setWindowTitle(f"AEROBUS v{__version__} · 插件与数据关联工作台")
         self.resize(1440, 920)
         self.setMinimumSize(1160, 780)
         palette = self.palette()
@@ -211,7 +212,7 @@ class MainWindow(QMainWindow):
             navigation.addWidget(nav)
         navigation.addStretch()
         navigation.addWidget(label("原始归档 · 参数分析", "muted"))
-        navigation.addWidget(label("v0.4.2", "muted"))
+        navigation.addWidget(label(f"v{__version__}", "muted"))
         layout.addWidget(rail)
         body = QWidget()
         body.setObjectName("frame")
@@ -593,7 +594,24 @@ class MainWindow(QMainWindow):
 
     def start_plugin(self, definition):
         try:
-            if definition["mode"] == "demo":
+            if definition["mode"] == "preset":
+                configuration = Path(__file__).resolve().parents[2] / "config" / definition["configuration"]
+                if self.client.active and Path(self.config_path.text()).resolve() != configuration.resolve():
+                    raise ValueError("请先结束当前会话，再启用使用配套字典的插件。")
+                sources = [(preset["source"], definition["path"], preset["config"]) for preset in definition["presets"]]
+                for source, plugin, config in sources:
+                    if source in self.source_configs and os.path.normcase(str(Path(self.source_configs[source][1]).resolve())) != os.path.normcase(str(Path(plugin).resolve())):
+                        raise ValueError("预设来源 ID 已被其他插件使用：" + source)
+                self.plugin_action_pending = True
+                if self.client.active:
+                    for source, plugin, config in sources:
+                        if source not in self.source_configs:
+                            self.client.send("add", source, plugin, config)
+                else:
+                    self.config_path.setText(str(configuration))
+                    self.pending_plugin_sources.extend(sources)
+                    self.new_session()
+            elif definition["mode"] == "demo":
                 if self.client.active and not self.session_is_demo:
                     raise ValueError("请先结束当前试验会话，再启动使用配套字典的演示插件。")
                 self.plugin_action_pending = True

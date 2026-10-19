@@ -18,6 +18,20 @@
     ]
   },
   {
+    "id": "mil1553b",
+    "name": "1553B软件验证插件",
+    "library": "bus_mil1553b_simulated",
+    "category": "内置 · 1553B合成输入",
+    "summary": "生成1553B常规收发、RT间传输和广播的合成监控记录，验证参数解码与关联分析。",
+    "description": "启用后选择1553B示例字典并准备bus1553来源，点击顶部“开始采集”才生成数据。模拟记录交替标记A/B总线，带命令/状态同步类型、16位字和奇校验位。",
+    "functions": ["生成BC→RT、RT→BC、RT→RT和广播监控记录", "按RT地址、子地址和方向选择示例参数", "显示消息类别、A/B总线及解析诊断", "复用原始归档、关联规则和离线重算"],
+    "parameters": "period_ms：记录生成间隔，默认5毫秒\nchannel：逻辑通道，示例为0\nfault_every：每隔N条记录注入一次奇校验错误；0关闭。",
+    "notes": "全部数据及工程量定义均为软件合成；模式指令和RT间Busy/Message Error响应暂未支持。未模拟电气波形、真实总线时序或采集卡行为。",
+    "mode": "preset",
+    "configuration": "mil1553b-demo.ini",
+    "presets": [{"source": "bus1553", "config": "period_ms=5;channel=0;fault_every=0"}]
+  },
+  {
     "id": "replay",
     "name": "归档回放插件",
     "library": "bus_replay",

@@ -3,6 +3,7 @@
 #include "core/path.hpp"
 #include "core/decoder_registry.hpp"
 #include "core/processing.hpp"
+#include "core/mil1553b.hpp"
 #include "core/json.hpp"
 #include "core/build_info.hpp"
 #include "core/arguments.hpp"
@@ -95,7 +96,7 @@ int main(int argc, char** argv) {
             std::shared_ptr<IAnalysisSink> analysis_sink = sink;
             if (control) { monitor = std::make_shared<MonitorSink>(sink); analysis_sink = monitor; }
             service = std::make_shared<ProcessingService>(config, analysis_sink);
-            consumer = service; decoder = std::make_unique<DictionaryDecoder>(config);
+            consumer = service; decoder = std::make_unique<ProtocolPipelineDecoder>(config);
             if (!control) std::cout << "analysis_output=" << output.string() << '\n';
         } else {
             auto decoders = std::make_unique<DecoderRegistry>();

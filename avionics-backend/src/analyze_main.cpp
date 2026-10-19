@@ -1,4 +1,5 @@
 #include "core/processing.hpp"
+#include "core/mil1553b.hpp"
 #include "core/archive.hpp"
 #include "core/demo_fixture.hpp"
 #include "core/path.hpp"
@@ -37,7 +38,7 @@ int main(int argc, char** argv) {
         auto config = BackendConfiguration::load(config_path);
         ArchiveReader reader(input_path);
         config.recording_session_id = reader.summary().session_id;
-        DictionaryDecoder decoder(config);
+        ProtocolPipelineDecoder decoder(config);
         auto sink = std::make_shared<JsonlAnalysisSink>(output);
         config.document->save(output / "configuration.ini");
         {

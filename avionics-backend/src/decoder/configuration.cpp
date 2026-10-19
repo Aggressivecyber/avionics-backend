@@ -1,5 +1,7 @@
 #include "core/configuration.hpp"
 #include "plugin_api/bus_plugin.h"
+#include "plugin_api/mil1553b_capture.hpp"
+#include <algorithm>
 #include <charconv>
 #include <cmath>
 #include <fstream>
@@ -118,6 +120,16 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
             field.source = take(values, "source"); field.unit = take(values, "unit");
             field.protocol = number<std::uint32_t>(take(values, "protocol"));
             field.channel = number<std::uint32_t>(take(values, "channel"));
+            if (field.protocol == BUS_PROTOCOL_MIL1553B) {
+                Mil1553BFieldSelector selected;
+                selected.rt_address = number<std::uint32_t>(take(values, "rt_address"));
+                selected.subaddress = number<std::uint32_t>(take(values, "subaddress"));
+                const auto direction = take(values, "direction");
+                if (selected.rt_address > 31 || !selected.subaddress || selected.subaddress >= 31 ||
+                    (direction != "receive" && direction != "transmit") || (selected.rt_address == 31 && direction == "transmit"))
+                    throw std::invalid_argument("invalid 1553B RT/subaddress/direction selector");
+                selected.transmit = direction == "transmit"; field.mil1553b = selected;
+            }
             field.bit_offset = number<std::uint32_t>(take(values, "bit_offset"));
             field.bit_width = number<std::uint32_t>(take(values, "bit_width"));
             const auto order = take(values, "byte_order");
@@ -152,6 +164,8 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
             if (field.type == FieldType::Float64 && (field.bit_width != 64 || field.bit_offset % 8 != 0))
                 throw std::invalid_argument("float64 requires aligned 64 bits");
             if (field.type == FieldType::Boolean && field.bit_width != 1) throw std::invalid_argument("bool requires one bit");
+            if (field.mil1553b && (std::uint64_t(field.bit_offset) + field.bit_width > 512 ||
+                (field.valid_bit && *field.valid_bit >= 512))) throw std::invalid_argument("1553B data exceeds 32 words");
             if ((field.type == FieldType::Boolean || field.type == FieldType::Enumeration) && (field.scale != 1 || field.offset != 0))
                 throw std::invalid_argument("bool and enum cannot be scaled");
             if (field.type == FieldType::Enumeration) {
@@ -162,6 +176,18 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
                 }
             }
             field_ids.insert(id); config.fields.push_back(std::move(field));
+        } else if (type == "protocol") {
+            ProtocolInputDefinition definition; definition.address.source = take(values, "source", id);
+            definition.address.channel = number<std::uint32_t>(take(values, "channel"));
+            const auto protocol = number<std::uint32_t>(take(values, "protocol"));
+            const auto selection = take(values, "selection", "auto");
+            if (protocol != BUS_PROTOCOL_MIL1553B || (selection != "auto" && selection != "manual") || definition.address.source == "*")
+                throw std::invalid_argument("protocol input requires a named source, 1553B and auto/manual selection");
+            definition.selection = selection == "manual" ? ProtocolSelection::manual(protocol) : ProtocolSelection::automatic();
+            definition.input.capture_representation = take(values, "capture_representation");
+            if (definition.input.capture_representation != mil1553b::capture_representation)
+                throw std::invalid_argument("unsupported 1553B capture representation");
+            config.protocol_inputs.push_back(std::move(definition));
         } else if (type == "clock") {
             ClockDefinition clock; clock.source = id;
             clock.group = take(values, "group"); clock.domain = number<std::uint32_t>(take(values, "domain"));
@@ -189,7 +215,22 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
     }
     if (config.fields.empty()) throw std::invalid_argument("dictionary has no parameters");
     std::set<std::pair<std::string, std::string>> parameter_states;
+    if (config.protocol_inputs.size() > ProtocolRoutingLimits{}.max_streams)
+        throw std::invalid_argument("protocol input count exceeds stream budget");
+    std::set<std::pair<std::string, std::uint32_t>> protocol_addresses;
+    for (const auto& definition : config.protocol_inputs) {
+        if (!protocol_addresses.emplace(definition.address.source, definition.address.channel).second)
+            throw std::invalid_argument("duplicate protocol source/channel");
+        parameter_states.emplace(definition.address.source, "mil1553b.protocol_status.ch" + std::to_string(definition.address.channel));
+    }
     for (const auto& field : config.fields) {
+        if (field.id.starts_with("mil1553b.protocol_status.")) throw std::invalid_argument("reserved protocol diagnostic parameter id");
+        if (field.mil1553b) {
+            const auto found = std::find_if(config.protocol_inputs.begin(), config.protocol_inputs.end(), [&](const auto& definition) {
+                return definition.address.channel == field.channel && (field.source == "*" || definition.address.source == field.source);
+            });
+            if (found == config.protocol_inputs.end()) throw std::invalid_argument("1553B field has no configured protocol input");
+        }
         if (field.source == "*") {
             for (const auto& clock : config.clocks) parameter_states.emplace(clock.source, field.id);
         } else parameter_states.emplace(field.source, field.id);
