@@ -24,6 +24,13 @@ void printStats(const FramePipeline& pipeline, const RuleAnalyzer& analyzer, con
     std::cout << "accepted=" << s.accepted << " completed=" << s.completed << " dropped=" << s.dropped
         << " samples=" << s.samples << " decode_errors=" << s.decode_errors << " unsupported=" << s.unsupported
         << " healthy=" << s.healthy << " retained_events=" << analyzer.events().size() << '\n';
+    std::cout << "recorded=" << s.recorded << " analysis_healthy=" << s.analysis_healthy
+        << " analysis_cursor=" << s.analysis_cursor << " analysis_skipped=" << s.analysis_skipped << '\n';
+    if (!s.analysis_failure.empty()) std::cout << "analysis_failure=" << s.analysis_failure << '\n';
+    if (s.analysis_first_missing) std::cout << "analysis_first_missing=" << *s.analysis_first_missing << '\n';
+    std::cout << "reject_queue_frames=" << s.rejections.queue_frames << " reject_queue_bytes=" << s.rejections.queue_bytes
+        << " reject_source_frames=" << s.rejections.source_frames << " reject_source_bytes=" << s.rejections.source_bytes
+        << " reject_source_capacity=" << s.rejections.source_capacity << '\n';
     if (!s.failure.empty()) std::cout << "failure=" << s.failure << '\n';
     for (const auto& [id, counters] : s.sources)
         std::cout << "  " << id << ": accepted=" << counters.accepted << " completed=" << counters.completed
@@ -57,11 +64,13 @@ int main(int argc, char** argv) {
         } else archive = pathFromUtf8(argv[2]);
         auto analyzer = std::make_shared<RuleAnalyzer>(22.0);
         std::shared_ptr<ProcessingService> service;
+        PipelineLimits pipeline_limits;
         std::shared_ptr<IParameterConsumer> consumer = analyzer;
         std::unique_ptr<IParameterDecoder> decoder;
         if (argc == 4) {
             const auto config_path = pathFromUtf8(argv[3]);
             const auto config = BackendConfiguration::load(config_path);
+            pipeline_limits = config.pipeline;
             if (std::filesystem::exists(archive)) throw std::runtime_error("raw archive already exists");
             auto output = archive; output += ".analysis";
             auto sink = std::make_shared<JsonlAnalysisSink>(output);
@@ -74,7 +83,7 @@ int main(int argc, char** argv) {
             decoders->registerDecoder(BUS_PROTOCOL_SIMULATED, std::make_shared<SimulatedDecoder>());
             decoder = std::move(decoders);
         }
-        auto pipeline = std::make_shared<FramePipeline>(4096, std::make_unique<ArchiveWriter>(archive),
+        auto pipeline = std::make_shared<FramePipeline>(pipeline_limits, std::make_unique<ArchiveWriter>(archive),
             std::move(decoder), consumer);
         std::cout << "archive=" << std::filesystem::absolute(archive).string() << '\n';
         {
@@ -137,8 +146,7 @@ int main(int argc, char** argv) {
             }
         } // all plugin workers joined before draining/closing the pipeline.
         pipeline->shutdown();
-        if (service && pipeline->stats().healthy) service->finish();
         printStats(*pipeline, *analyzer, service.get());
-        return pipeline->stats().healthy ? 0 : 1;
+        return pipeline->stats().healthy ? (pipeline->stats().analysis_healthy ? 0 : 3) : 1;
     } catch (const std::exception& e) { std::cerr << "fatal: " << e.what() << '\n'; return 1; }
 }

@@ -11,5 +11,6 @@ class IParameterConsumer {
 public:
     virtual ~IParameterConsumer() = default;
     virtual void consume(const ParameterSample&) = 0;
+    virtual void finish() {}
 };
 }

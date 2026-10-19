@@ -82,6 +82,17 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
         if (!config.max_reorder_samples) throw std::invalid_argument("max_reorder_samples must be positive");
         empty(limits->second); sections.erase(limits);
     } else if (schema == "2") throw std::invalid_argument("schema 2 requires [processing] and explicit allowed_lateness_ms");
+    if (auto budget = sections.find("pipeline"); budget != sections.end()) {
+        auto& limits = config.pipeline;
+        limits.queue_frames = number<std::size_t>(take(budget->second, "queue_frames", "4096"));
+        limits.source_frames = number<std::size_t>(take(budget->second, "source_frames", "1024"));
+        limits.analysis_frames = number<std::size_t>(take(budget->second, "analysis_frames", "4096"));
+        limits.queue_bytes = number<std::size_t>(take(budget->second, "queue_bytes", "67108864"));
+        limits.source_bytes = number<std::size_t>(take(budget->second, "source_bytes", "16777216"));
+        limits.analysis_bytes = number<std::size_t>(take(budget->second, "analysis_bytes", "67108864"));
+        limits.max_sources = number<std::size_t>(take(budget->second, "max_sources", "256"));
+        limits.validate(); empty(budget->second); sections.erase(budget);
+    }
     std::set<std::string> field_ids;
     for (auto& [section, values] : sections) {
         const auto space = section.find(' ');

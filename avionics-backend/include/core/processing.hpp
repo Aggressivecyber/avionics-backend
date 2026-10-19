@@ -63,7 +63,7 @@ public:
     // The caller must supply a VERIFIED watermark in this mapped clock group.
     // This method does not translate wall time to device time.
     void advance(const std::string& group, std::uint64_t watermark_ns);
-    void finish(); // pending responses at EOF are unresolved, never fabricated timeouts.
+    void finish() override; // pending responses at EOF are unresolved, never fabricated timeouts.
     ProcessingStats stats() const;
     std::vector<CorrelationResult> results() const;
 private:

@@ -62,6 +62,35 @@ public:
     std::condition_variable changed;
     bool entered{}, released{};
 };
+class GateRecorder final : public IFrameRecorder {
+public:
+    void write(const RawFrame& item) override {
+        std::unique_lock lock(mutex_);
+        entered_ = true; changed_.notify_all();
+        changed_.wait(lock, [&] { return released_; });
+        frames.push_back(item);
+    }
+    void flush() override {}
+    bool awaitEntry() {
+        std::unique_lock lock(mutex_);
+        return changed_.wait_for(lock, 3s, [&] { return entered_; });
+    }
+    void release() { std::lock_guard lock(mutex_); released_ = true; changed_.notify_all(); }
+    std::vector<RawFrame> frames;
+private:
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    bool entered_{}, released_{};
+};
+class ThrowingConsumer final : public IParameterConsumer {
+public:
+    void consume(const ParameterSample&) override { throw std::runtime_error("injected analysis failure"); }
+};
+class FinishFailureConsumer final : public IParameterConsumer {
+public:
+    void consume(const ParameterSample&) override {}
+    void finish() override { throw std::runtime_error("injected analysis finish failure"); }
+};
 void testDecodeAndRules() {
     DecoderRegistry registry;
     check(registry.decode(frame("a", 1)).empty(), "unregistered protocol must remain undecoded");
@@ -97,11 +126,18 @@ void testQueueAndFailures() {
     const bool first = pipeline.submit(frame("a", 1));
     const bool entered = gate->awaitEntry();
     const bool second = pipeline.submit(frame("a", 2));
+    const bool recorded_second = pipeline.drainSource("a", 1000ms);
     const bool third = pipeline.submit(frame("a", 3));
+    const bool recorded_third = pipeline.drainSource("a", 1000ms);
     const bool fourth = pipeline.submit(frame("a", 4));
+    const bool recorded_fourth = pipeline.drainSource("a", 1000ms);
     gate->release(); pipeline.shutdown();
-    check(first && entered && second && third && !fourth, "bounded queue must reject newest frame when full");
-    check(pipeline.stats().dropped == 1 && inspect->frames.size() == 3, "overflow must be visible and accepted frames retained");
+    check(first && entered && second && third && fourth && recorded_second && recorded_third && recorded_fourth,
+        "blocked analysis prevented raw recording from draining");
+    const auto stalled = pipeline.stats();
+    check(stalled.healthy && !stalled.analysis_healthy && stalled.recorded == 4 && inspect->frames.size() == 4 &&
+        stalled.analysis_skipped == 3 && stalled.analysis_first_missing == 2,
+        "analysis overflow was not isolated with a replay position");
     check(!pipeline.submit(frame("a", 5)), "submission after shutdown must fail");
     auto analyzer = std::make_shared<RuleAnalyzer>(22);
     FramePipeline broken(4, std::make_unique<BrokenRecorder>(), std::make_unique<SimulatedDecoder>(), analyzer);
@@ -115,6 +151,62 @@ void testQueueAndFailures() {
     malformed.shutdown();
     check(malformed.stats().decode_errors == 1 && malformed.stats().unsupported == 1 && malformed.stats().healthy,
         "bad/unknown payloads must be counted separately without killing raw capture");
+
+    auto blocked = std::make_unique<GateRecorder>(); auto* gate_record = blocked.get();
+    PipelineLimits limits; limits.queue_frames = 4; limits.source_frames = 1; limits.analysis_frames = 8;
+    limits.queue_bytes = 4096; limits.source_bytes = 1024;
+    FramePipeline bounded(limits, std::move(blocked), std::make_unique<SimulatedDecoder>(), analyzer);
+    const bool initial = bounded.submit(frame("a", 1)), writing = gate_record->awaitEntry();
+    const bool queued_a = bounded.submit(frame("a", 2)), extra_a = bounded.submit(frame("a", 3));
+    const bool queued_b = bounded.submit(frame("b", 1));
+    auto source_large = frame("c", 1); source_large.payload.resize(2048);
+    const bool large_source = bounded.submit(std::move(source_large));
+    auto globally_large = frame("d", 1); globally_large.payload.resize(BUS_MAX_PAYLOAD);
+    const bool large_global = bounded.submit(std::move(globally_large));
+    const bool queued_e = bounded.submit(frame("e", 1)), queued_f = bounded.submit(frame("f", 1));
+    const bool extra_global = bounded.submit(frame("g", 1));
+    gate_record->release(); bounded.shutdown();
+    const auto budgets = bounded.stats();
+    check(initial && writing && queued_a && !extra_a && queued_b && !large_source && !large_global && queued_e && queued_f && !extra_global,
+        "source or global admission budgets changed");
+    check(budgets.recorded == 5 && budgets.rejections.source_frames == 1 && budgets.rejections.source_bytes == 1 &&
+        budgets.rejections.queue_bytes == 1 && budgets.rejections.queue_frames == 1 && budgets.queued_bytes == 0,
+        "byte, frame or per-source rejection accounting was lost");
+
+    limits = PipelineLimits{}; limits.max_sources = 1; limits.analysis_bytes = 1;
+    FramePipeline capacity(limits, std::make_unique<MemoryRecorder>(), std::make_unique<SimulatedDecoder>(), analyzer);
+    capacity.reserveSource("a");
+    throws([&] { capacity.reserveSource("b"); }, "source state overflow was not rejected before start");
+    check(!capacity.submit(frame("b", 1)), "unreserved overflow source was accepted");
+    check(capacity.submit(frame("a", 1)), "approved source was rejected");
+    capacity.shutdown();
+    check(capacity.stats().healthy && !capacity.stats().analysis_healthy && capacity.stats().recorded == 1 &&
+        capacity.stats().sources.size() == 1 && capacity.stats().rejections.source_capacity == 1,
+        "analysis byte budget or bounded source states affected raw recording");
+}
+void testAnalysisIsolation(const std::filesystem::path& dir) {
+    const auto path = dir / "analysis-failure.avbus";
+    PipelineStats stats;
+    {
+        FramePipeline pipeline(8, std::make_unique<ArchiveWriter>(path), std::make_unique<SimulatedDecoder>(),
+            std::make_shared<ThrowingConsumer>());
+        check(pipeline.submit(frame("a", 1)), "first analysis-failure frame was rejected");
+        eventually([&] { return !pipeline.stats().analysis_healthy; }, "analysis exception was not exposed");
+        check(pipeline.submit(frame("a", 2)) && pipeline.drainSource("a", 1000ms), "analysis exception stopped raw recording");
+        pipeline.shutdown(); stats = pipeline.stats();
+    }
+    std::size_t records{}; RawFrame item; ArchiveReader reader(path);
+    while (reader.next(item)) ++records;
+    check(stats.healthy && !stats.analysis_healthy && records == 2 && stats.recorded == 2 &&
+        stats.analysis_first_missing == 1 && stats.analysis_failure == "injected analysis failure",
+        "analysis failure lost raw evidence or its replay diagnostics");
+    FramePipeline finishing(8, std::make_unique<MemoryRecorder>(), std::make_unique<SimulatedDecoder>(),
+        std::make_shared<FinishFailureConsumer>());
+    check(finishing.submit(frame("a", 1)), "finalization-failure frame was rejected");
+    finishing.shutdown();
+    check(finishing.stats().healthy && !finishing.stats().analysis_healthy && finishing.stats().recorded == 1 &&
+        finishing.stats().analysis_failure == "injected analysis finish failure",
+        "analysis output finalization failure was not isolated from recording");
 }
 void testArchive(const std::filesystem::path& dir) {
     const auto path = dir / "roundtrip.avbus";
@@ -240,6 +332,7 @@ int main(int argc, char** argv) {
         testDecodeAndRules(); std::cout << "PASS signed decoding, rule quality and generation boundaries\n";
         testQueueAndFailures(); std::cout << "PASS bounded queue, storage failure, malformed/unsupported frames\n";
         testArchive(dir); std::cout << "PASS archive roundtrip, overwrite protection, CRC and truncation\n";
+        testAnalysisIsolation(dir); std::cout << "PASS independent raw recording through analysis exception and replay diagnostics\n";
         testLifecycle(argv[1], argv[2], argv[3], dir);
         std::cout << "PASS lifecycle, 20 replacements, ABI/config rejection, rollback, isolation, cross-plugin swap and replay\n";
         std::cout << "ALL TESTS PASSED\nartifacts=" << dir.string() << '\n';

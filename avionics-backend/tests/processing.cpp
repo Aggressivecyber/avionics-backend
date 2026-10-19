@@ -61,6 +61,8 @@ void testConfiguration(const std::filesystem::path& path, const std::filesystem:
     reject(original + "\n[processing]\nmax_parameter_states=3\n");
     reject(original + "\n[processing]\nmax_parameter_states=0\n");
     reject(original + "\n[processing]\nmax_reorder_samples=0\n");
+    reject(original + "\n[pipeline]\nsource_frames=8192\n");
+    reject(original + "\n[pipeline]\nqueue_bytes=0\n");
     const auto valid = BackendConfiguration::load(path);
     check(valid.fields.size() == 4 && valid.responses.size() == 1 && valid.consistency.size() == 1, "configuration lost rules");
     const auto budgeted = output / "budgeted.ini";

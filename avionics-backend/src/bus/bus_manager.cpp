@@ -23,6 +23,7 @@ void BusManager::add(const std::string& id, const std::filesystem::path& plugin,
     auto entry = std::make_shared<Entry>();
     entry->adapter = plugins_.create(plugin, id, pipeline_);
     entry->adapter->configure(config);
+    pipeline_->reserveSource(id);
     std::lock_guard lock(mutex_);
     if (!entries_.emplace(id, entry).second) throw std::invalid_argument("duplicate instance id: " + id);
 }

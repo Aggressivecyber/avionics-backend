@@ -1,5 +1,6 @@
 #pragma once
 #include "core/parameter_interfaces.hpp"
+#include "core/pipeline_limits.hpp"
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -44,6 +45,7 @@ struct BackendConfiguration {
     std::size_t max_parameter_states{4096};
     std::size_t max_reorder_samples{8192};
     std::uint64_t allowed_lateness_ns{};
+    PipelineLimits pipeline;
     std::vector<FieldDefinition> fields;
     std::vector<ClockDefinition> clocks;
     std::vector<ConsistencyDefinition> consistency;
