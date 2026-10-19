@@ -12,6 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--build", required=True)
     parser.add_argument("--output", required=True)
+    parser.add_argument("--verification", type=Path)
     parser.add_argument("--mingw-bin", default=r"C:\msys64\mingw64\bin")
     args = parser.parse_args()
     if os.name != "nt":
@@ -33,7 +34,7 @@ def main():
         raise RuntimeError("Package requires a clean source tree and binaries built from its exact commit")
     output.mkdir(parents=True, exist_ok=False)
     (output / "bin").mkdir()
-    for name in ("bus_backend.exe", "bus_capture_worker.exe", "bus_analyze.exe", "bus_simulated.dll", "bus_replay.dll"):
+    for name in ("bus_backend.exe", "bus_capture_worker.exe", "bus_analyze.exe", "bus_simulated.dll", "bus_replay.dll", "bus_mil1553b_simulated.dll"):
         shutil.copy2(build / "bin" / name, output / "bin" / name)
     for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
         shutil.copy2(compiler / name, output / "bin" / name)
@@ -48,6 +49,8 @@ def main():
     shutil.copy2(root / "frontend" / "requirements.txt", output / "frontend" / "requirements.txt")
     (output / "scripts").mkdir()
     shutil.copy2(root / "scripts" / "start-frontend.ps1", output / "scripts" / "start-frontend.ps1")
+    if args.verification:
+        shutil.copytree(args.verification, output / "verification")
     (output / "Start-AEROBUS.cmd").write_text(
         '@echo off\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\start-frontend.ps1" '
         '-BinDir "%~dp0bin" %*\n', encoding="ascii")
@@ -55,7 +58,7 @@ def main():
                    cwd=root, check=True, creationflags=flags)
     files = {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(output.rglob("*")) if path.is_file()}
-    manifest = {"build": version, "platform": "windows-x64-mingw", "acceptance_scope": "software-architecture-baseline",
+    manifest = {"build": version, "platform": "windows-x64-mingw", "acceptance_scope": "software-architecture-and-synthetic-1553b-monitor",
                 "desktop": {"version": version["version"], "toolkit": "Qt Widgets", "binding": "PySide6", "tested_version": "6.9.2",
                             "python_qt_runtime": "external", "launcher": "Start-AEROBUS.cmd",
                             "control_schema": 1, "plugin_catalog": "frontend/ground_station/plugins.json",

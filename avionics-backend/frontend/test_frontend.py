@@ -396,6 +396,59 @@ class FrontendIntegration(unittest.TestCase):
                                    "replay_started_from_card": True, "definitions_reopened": True})
 
 
+    def test_06_mil1553b_enable_start_stop_and_seal(self):
+        window = self.window
+        window.navigate(2)
+        card = window.plugin_center.cards["mil1553b"]
+        self.assertTrue(window.grab().save(str(args.output / "1553b-plugins.png")))
+        QTest.mouseClick(card.start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("bus1553") == "已配置" and window.capture_button.isEnabled())
+        QTest.qWait(350)
+        self.assertEqual(window.latest_snapshot["recorded"], 0)
+        self.assertEqual(window.parameter_model.rowCount(), 0)
+        self.assertEqual(Path(window.config_path.text()).name, "mil1553b-demo.ini")
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.parameter_model.rowCount() == 7)
+        wait_until(lambda: window.latest_snapshot["recorded"] > 40)
+        rows = {row["parameter"]: row for row in window.parameter_model.rows}
+        self.assertTrue(rows["temperature_a"]["payload_valid"])
+        self.assertTrue(rows["position"]["payload_valid"])
+        self.assertIn("complete:", rows["mil1553b.protocol_status.ch0"]["value"]["label"])
+        self.assertTrue(window.grab().save(str(args.output / "1553b-monitor.png")))
+        page = window.relations_page
+        window.navigate(3)
+        QTest.qWait(30)
+        for index, row in enumerate(page.input_model.rows):
+            if row["parameter"] in {"temperature_a", "temperature_b"}:
+                page.input_model.setData(page.input_model.index(index, 0), Qt.CheckState.Checked.value, Qt.ItemDataRole.CheckStateRole)
+        page.name.setText("1553B温差")
+        page.formula.setText("A-B")
+        page.unit.setText("degC")
+        page.window_ms.setValue(50)
+        QTest.mouseClick(page.create_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(len(page.engine.relations), 1, page.feedback.text())
+        wait_until(lambda: bool(page.engine.relations) and len(page.engine.relations[0].history) > 2)
+        self.assertIsNotNone(page.engine.relations[0].origin_ns)
+        window.navigate(3)
+        self.assertTrue(window.grab().save(str(args.output / "1553b-relations.png")))
+        window.navigate(2)
+        QTest.mouseClick(card.stop_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("bus1553") == "已停止")
+        QTest.mouseClick(card.start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.capture_button.isEnabled())
+        QTest.qWait(350)
+        self.assertEqual(self.source_state("bus1553"), "已停止")
+        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: self.source_state("bus1553") == "运行中")
+        window.end_session()
+        wait_until(lambda: not window.client.active)
+        self.assertEqual(window.last_metadata["archive"]["integrity"], "sealed")
+        self.assertEqual(window.last_metadata["capture_status"], "complete")
+        self.assertEqual(window.last_metadata["analysis_status"], "complete")
+        receipt["checks"].append({"name": self._testMethodName, "status": "passed", "enable_without_capture": True,
+            "parameter_count": 7, "relation": "1553B温差", "restart_requires_start_button": True, "metadata": window.last_metadata})
+
+
 if __name__ == "__main__":
     from PySide6.QtCore import qVersion
     receipt["qt_version"] = qVersion()
