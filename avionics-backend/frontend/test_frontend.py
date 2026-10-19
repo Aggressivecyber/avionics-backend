@@ -13,10 +13,11 @@ import unittest
 from uuid import uuid4
 
 sys.dont_write_bytecode = True
-from PySide6.QtCore import QPoint, QTimer, Qt
-from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetricsF, QPixmap
+from PySide6.QtCore import QEvent, QPoint, QTimer, Qt
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetricsF, QHelpEvent, QPixmap
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QSplitter, QStyle, QStyleOptionSlider, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QSplitter, QStyle, QStyleOptionSlider, QToolTip, QVBoxLayout, QWidget
+from unittest.mock import patch
 
 from ground_station.backend import BackendClient, writable_data_path
 from ground_station.window import MainWindow, SourceDialog
@@ -96,6 +97,11 @@ class FrontendIntegration(unittest.TestCase):
                 return self.window.sources.item(i, 1).text()
         return None
 
+    def click_project_action(self, control):
+        self.window.navigate(4)
+        self.assertTrue(control.isVisible())
+        QTest.mouseClick(control, Qt.MouseButton.LeftButton)
+
     def capture_layouts(self, stage, pages):
         window = self.window
         original_size, original_page = window.size(), window.pages.currentIndex()
@@ -110,8 +116,10 @@ class FrontendIntegration(unittest.TestCase):
                 window.navigate(page)
                 QTest.qWait(30)
                 self.assertEqual((window.width(), window.height()), (width, height))
-                controls = [window.capture_button, window.end_button, window.heading,
-                            window.recording_status, window.archive_path]
+                controls = [window.heading, window.recording_status, window.archive_path]
+                if page == 4:
+                    controls += [window.project_name, window.config_path, window.storage_label,
+                                 window.new_button, window.capture_button, window.end_button, window.badge]
                 if page == 3:
                     controls += [window.relations_page.input_view, window.relations_page.create_button,
                                  window.relations_page.relationships, window.relations_page.plot]
@@ -146,7 +154,7 @@ class FrontendIntegration(unittest.TestCase):
         window = self.window
         QTest.mouseClick(window.plugin_center.cards["demo"].start_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.capture_button.isEnabled())
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.capture_button)
         # Rule events depend on real cross-process timing and the configured 5 ms rule window.
         wait_until(lambda: window.parameter_model.rowCount() == 4)
         QTest.qWait(550)
@@ -173,7 +181,7 @@ class FrontendIntegration(unittest.TestCase):
         self.select_source("sensor_b")
         QTest.mouseClick(window.remove_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.sources.rowCount() == 3)
-        QTest.mouseClick(window.end_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.end_button)
         wait_until(lambda: not window.client.active)
         metadata = window.last_metadata
         self.assertIsNotNone(metadata)
@@ -215,7 +223,7 @@ class FrontendIntegration(unittest.TestCase):
 
     def test_02_sdk_failure_keeps_ui_responsive(self):
         window = self.window
-        QTest.mouseClick(window.new_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.new_button)
         wait_until(lambda: window.client.is_ready)
         plugin = str(args.bin_dir / ("bus_simulated" + plugin_suffix))
         window.client.send("add", "sensor_a", plugin, "period_ms=20")
@@ -242,7 +250,7 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: self.source_state("bad") == "故障")
         wait_until(lambda: "降级" in window.badge.text())
         self.assertTrue(window.grab().save(str(args.output / "degraded.png")))
-        QTest.mouseClick(window.end_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.end_button)
         wait_until(lambda: not window.client.active)
         self.assertEqual(window.last_metadata["capture_status"], "degraded")
         self.assertEqual(window.last_metadata["archive"]["integrity"], "sealed")
@@ -264,7 +272,7 @@ class FrontendIntegration(unittest.TestCase):
         dialog.reject()
         self.window.start_demo()
         wait_until(lambda: self.window.capture_button.isEnabled())
-        QTest.mouseClick(self.window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(self.window.capture_button)
         wait_until(lambda: self.window.parameter_model.rowCount() == 4)
         self.window.close()
         wait_until(lambda: not self.window.client.active)
@@ -283,7 +291,7 @@ class FrontendIntegration(unittest.TestCase):
         window = self.window
         window.start_demo()
         wait_until(lambda: window.capture_button.isEnabled())
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.capture_button)
         wait_until(lambda: window.parameter_model.rowCount() == 4)
         window.client.process.kill()
         wait_until(lambda: not window.client.active)
@@ -312,21 +320,21 @@ class FrontendIntegration(unittest.TestCase):
         metrics = QFontMetricsF(window.parameter_view.font())
         self.assertLess(max(metrics.horizontalAdvance(c) for c in "0123456789") -
                         min(metrics.horizontalAdvance(c) for c in "0123456789"), 0.01)
-        for page_index in range(4):
+        for page_index in range(5):
             window.navigate(page_index)
-            self.assertTrue(window.capture_button.isVisible())
+            self.assertEqual(window.capture_button.isVisible(), page_index == 4)
+            self.assertEqual(window.new_button.isVisible(), page_index == 4)
+            self.assertEqual(window.end_button.isVisible(), page_index == 4)
             self.assertFalse(window.capture_button.isEnabled())
         window.navigate(2)
         self.assertFalse(any("关联" in window.monitor_tabs.tabText(i) for i in range(window.monitor_tabs.count())))
         self.assertTrue(window.grab().save(str(args.output / "plugins.png")))
-        def inspect_settings():
-            self.assertIs(QApplication.activeModalWidget(), window.config_dialog)
-            self.assertTrue(window.config_path.isVisible())
-            self.assertTrue(window.storage_label.isVisible())
-            self.assertTrue(window.config_dialog.grab().save(str(args.output / "settings.png")))
-            window.config_dialog.reject()
-        QTimer.singleShot(80, inspect_settings)
-        QTest.mouseClick(window.config_toggle, Qt.MouseButton.LeftButton)
+        QTest.mouseClick(window.project_nav, Qt.MouseButton.LeftButton)
+        self.assertEqual(window.pages.currentIndex(), 4)
+        self.assertTrue(window.config_path.isVisible())
+        self.assertTrue(window.storage_label.isVisible())
+        self.assertTrue(window.grab().save(str(args.output / "settings.png")))
+        window.navigate(2)
         demo = window.plugin_center.cards["demo"]
         inspected = []
         def inspect_details():
@@ -357,8 +365,8 @@ class FrontendIntegration(unittest.TestCase):
         window.navigate(2)
         QTest.qWait(30)
         self.assertTrue(window.grab().save(str(args.output / "plugins-ready.png")))
-        self.capture_layouts("ready", (2,))
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.capture_layouts("ready", (2, 4))
+        self.click_project_action(window.capture_button)
         wait_until(lambda: window.parameter_model.rowCount() == 4)
         self.assertEqual(window.recording_status.text(), "采集中")
         self.assertEqual(window.pages.currentIndex(), 0)
@@ -453,7 +461,7 @@ class FrontendIntegration(unittest.TestCase):
         page.relationships.selectRow(0)
         self.assertGreater(len(page.plot.points), 0)
         self.assertTrue(window.grab().save(str(args.output / "relations.png")))
-        self.capture_layouts("active", (0, 3))
+        self.capture_layouts("active", (0, 3, 4))
         self.assertTrue((self.data_dir / "relations.json").exists())
         # A separate plugin copy keeps collecting when the demo module is disabled.
         separate = self.data_dir / ("独立采集插件" + plugin_suffix)
@@ -470,12 +478,13 @@ class FrontendIntegration(unittest.TestCase):
         before = next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"]
         wait_until(lambda: next(row for row in window.latest_snapshot["sources"] if row["id"] == "independent")["recorded"] > before)
         self.assertIn("已停用", demo.status.text())
+        window.navigate(4)
         self.assertTrue(window.capture_button.isVisible())
         self.assertFalse(window.capture_button.isEnabled())
         # Starting another ready source must not restart the disabled demo plugin.
         window.client.send("add", "independent_ready", str(separate), "period_ms=5")
         wait_until(lambda: self.source_state("independent_ready") == "已配置" and window.capture_button.isEnabled())
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.capture_button)
         wait_until(lambda: self.source_state("independent_ready") == "运行中")
         self.assertTrue(all(self.source_state(source) == "已停止" for source in ("sensor_a", "sensor_b", "control", "feedback")))
         window.navigate(2)
@@ -483,9 +492,9 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: window.capture_button.isEnabled())
         QTest.qWait(400)
         self.assertTrue(all(self.source_state(source) == "已停止" for source in ("sensor_a", "sensor_b", "control", "feedback")))
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.capture_button)
         wait_until(lambda: self.source_state("sensor_a") == "运行中")
-        QTest.mouseClick(window.end_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.end_button)
         wait_until(lambda: not window.client.active)
         self.assertEqual(window.last_metadata["capture_status"], "complete")
         archive = window.archive
@@ -503,7 +512,7 @@ class FrontendIntegration(unittest.TestCase):
         QTest.qWait(400)
         self.assertEqual(window.latest_snapshot["recorded"], 0)
         self.assertEqual(window.parameter_model.rowCount(), 0)
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.capture_button)
         wait_until(lambda: self.source_state("replay") == "运行中")
         wait_until(lambda: window.latest_snapshot["recorded"] > 0)
         self.assertEqual(window.pages.currentIndex(), 0)
@@ -522,7 +531,7 @@ class FrontendIntegration(unittest.TestCase):
         receipt["checks"].append({"name": self._testMethodName, "status": "passed",
                                    "plugin_details_verified": True, "named_relations": 3,
                                    "enable_without_acquisition_verified": True,
-                                   "capture_button_visible_on_all_pages": True,
+                                   "project_controls_concentrated_in_settings": True,
                                    "persistent_archive_status_verified": True,
                                    "splitter_drag_verified": dragged, "scrollbar_drag_verified": True,
                                    "dropdown_keyboard_selection_verified": True,
@@ -542,7 +551,7 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(window.latest_snapshot["recorded"], 0)
         self.assertEqual(window.parameter_model.rowCount(), 0)
         self.assertEqual(Path(window.config_path.text()).name, "mil1553b-demo.ini")
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.capture_button)
         wait_until(lambda: window.parameter_model.rowCount() == 7)
         wait_until(lambda: window.latest_snapshot["recorded"] > 40)
         rows = {row["parameter"]: row for row in window.parameter_model.rows}
@@ -573,7 +582,7 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: window.capture_button.isEnabled())
         QTest.qWait(350)
         self.assertEqual(self.source_state("bus1553"), "已停止")
-        QTest.mouseClick(window.capture_button, Qt.MouseButton.LeftButton)
+        self.click_project_action(window.capture_button)
         wait_until(lambda: self.source_state("bus1553") == "运行中")
         window.end_session()
         wait_until(lambda: not window.client.active)
@@ -647,6 +656,88 @@ class FrontendIntegration(unittest.TestCase):
         receipt["checks"].append({"name": self._testMethodName, "status": "passed",
             "generated_asset_count": len(entries), "unique_sha256": len(set(hashes)),
             "kinds": sorted({entry["kind"] for entry in entries}), "native_png_decoding": True})
+
+    def test_08_project_settings_and_hover_help(self):
+        window = self.window
+        window.raise_()
+        window.activateWindow()
+        QTest.qWait(100)
+        QTest.mouseClick(window.project_nav, Qt.MouseButton.LeftButton)
+        self.assertEqual(window.pages.currentIndex(), 4)
+        self.assertEqual(window.heading.text(), "项目设置")
+        self.assertEqual(window.new_button.text(), "新建项目")
+        settings = [window.project_name, window.config_path, window.config_button,
+                    window.storage_label, window.storage_button, window.open_storage_button,
+                    window.new_button, window.capture_button, window.end_button, window.badge]
+        for control in settings:
+            self.assertTrue(control.isVisible())
+            self.assertTrue(control.toolTip(), type(control).__name__)
+        point = window.project_name.rect().center()
+        QApplication.sendEvent(window.project_name, QHelpEvent(QEvent.Type.ToolTip, point,
+                                  window.project_name.mapToGlobal(point)))
+        wait_until(QToolTip.isVisible, 2000)
+        self.assertEqual(QToolTip.text(), window.project_name.toolTip())
+        self.assertTrue(window.grab().save(str(args.output / "project-hover-help.png")))
+        tooltip = next(widget for widget in QApplication.topLevelWidgets() if widget.objectName() == "qtooltip_label")
+        self.assertTrue(tooltip.grab().save(str(args.output / "project-tooltip.png")))
+        QToolTip.hideText()
+        window.project_name.setText("非法/名称")
+        self.click_project_action(window.new_button)
+        self.assertFalse(window.client.active)
+        self.assertIn("项目名称", window.message.text())
+        window.project_name.setText("项目设置验收")
+        with patch("ground_station.window.QFileDialog.getOpenFileName",
+                   return_value=(str(window.demo_configuration), "配置 (*.ini)")):
+            QTest.mouseClick(window.config_button, Qt.MouseButton.LeftButton)
+        storage = self.data_dir / "项目数据"
+        storage.mkdir()
+        with patch("ground_station.window.QFileDialog.getExistingDirectory", return_value=str(storage)):
+            QTest.mouseClick(window.storage_button, Qt.MouseButton.LeftButton)
+        self.assertEqual(window.data_dir, storage)
+        self.assertEqual(window.config_path.text(), str(window.demo_configuration))
+        self.click_project_action(window.new_button)
+        wait_until(lambda: window.client.is_ready and "recorded" in window.latest_snapshot)
+        self.assertEqual(window.pages.currentIndex(), 4)
+        self.assertTrue(window.archive.name.startswith("项目设置验收_"))
+        self.assertEqual(window.archive.parent, storage)
+        self.assertFalse(window.project_name.isEnabled())
+        self.assertFalse(window.config_button.isEnabled())
+        self.assertFalse(window.storage_button.isEnabled())
+        self.assertEqual(window.latest_snapshot["recorded"], 0)
+        window.navigate(2)
+        QTest.mouseClick(window.plugin_center.cards["demo"].start_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda: window.sources.rowCount() == 4 and window.capture_button.isEnabled())
+        self.assertEqual(window.latest_snapshot["recorded"], 0)
+        self.select_source("sensor_a")
+        self.assertIn("所属插件：合成演示插件", window.source_note.text())
+        self.assertIn("采集源：sensor_a", window.source_note.text())
+        self.assertTrue(window.grab().save(str(args.output / "plugin-source-ownership.png")))
+        self.capture_layouts("project-ready", (4,))
+        self.click_project_action(window.capture_button)
+        wait_until(lambda: window.parameter_model.rowCount() == 4)
+        self.assertEqual(window.recording_status.text(), "采集中")
+        self.capture_layouts("project-active", (4,))
+        self.click_project_action(window.end_button)
+        wait_until(lambda: not window.client.active)
+        self.assertEqual(window.badge.text(), "已封存 · 采集与分析完整")
+        self.assertTrue(window.new_button.isEnabled())
+        self.assertFalse(window.capture_button.isEnabled())
+        self.assertFalse(window.end_button.isEnabled())
+        self.capture_layouts("project-sealed", (4,))
+        first_archive = window.archive
+        window.project_name.setText("下一项目")
+        self.click_project_action(window.new_button)
+        wait_until(lambda: window.client.is_ready and "recorded" in window.latest_snapshot)
+        self.assertNotEqual(window.archive, first_archive)
+        self.assertTrue(first_archive.is_file())
+        self.assertTrue(window.archive.name.startswith("下一项目_"))
+        self.assertEqual(window.latest_snapshot["recorded"], 0)
+        receipt["checks"].append({"name": self._testMethodName, "status": "passed",
+            "page": "项目设置", "controls_have_hover_help": len(settings),
+            "qt_tooltip_display_verified": True, "project_name_used_in_archive": True,
+            "configuration_and_directory_selection_verified": True,
+            "controls_locked_while_active": True, "manual_capture_preserved": True,
+            "seal_then_new_project_preserves_archive": True, "plugin_source_ownership_visible": True})
 
 
 if __name__ == "__main__":

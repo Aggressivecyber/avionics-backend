@@ -51,7 +51,7 @@ class PluginCard(QFrame):
         functions.setTextFormat(Qt.TextFormat.PlainText)
         functions.setWordWrap(True)
         layout.addWidget(functions)
-        self.runtime = QLabel("启用插件后就绪，由顶部“开始采集”按钮开始采集。")
+        self.runtime = QLabel("启用插件后就绪，由“项目设置”中的“开始采集”按钮开始采集。")
         self.runtime.setObjectName("muted")
         self.runtime.setWordWrap(True)
         layout.addWidget(self.runtime)
@@ -60,6 +60,9 @@ class PluginCard(QFrame):
         self.start_button = QPushButton("启用插件")
         self.stop_button = QPushButton("停用")
         self.details_button = QPushButton("查看详情")
+        self.start_button.setToolTip("加载这个插件并准备其采集源；到“项目设置”点击“开始采集”后才接收数据。一个插件可以创建多路源。")
+        self.stop_button.setToolTip("停止属于这个插件的所有采集源；其他插件及已记录数据保留。")
+        self.details_button.setToolTip("查看这个插件的功能、配置参数、说明及其各路采集源的当前状态。")
         self.start_button.setIcon(icon("plugin_enable"))
         self.stop_button.setIcon(icon("plugin_disable"))
         self.details_button.setIcon(icon("evidence"))
@@ -109,7 +112,7 @@ class ReplaySetupDialog(QDialog):
             Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
         guide.setAlignment(Qt.AlignmentFlag.AlignCenter)
         form.addRow(guide)
-        caption = QLabel("选择原始归档 → 准备回放源 → 点击顶部“开始采集”")
+        caption = QLabel("选择原始归档 → 准备回放源 → 点击“项目设置”中的“开始采集”")
         caption.setObjectName("muted")
         form.addRow(caption)
         self.source = QLineEdit("replay")
@@ -162,7 +165,7 @@ class PluginCenter(QWidget):
         self.sources_by_plugin = {}
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        note = QLabel("先启用插件，再点击顶部“开始采集”；停用仅停止该插件的来源。点击详情查看功能、配置参数和当前状态。")
+        note = QLabel("先启用插件，再点击“项目设置”中的“开始采集”；停用仅停止该插件的来源。点击详情查看功能、配置参数和当前状态。")
         note.setWordWrap(True)
         note.setObjectName("muted")
         introduction = QHBoxLayout()
@@ -207,8 +210,8 @@ class PluginCenter(QWidget):
             normalized = os.path.normcase(str(Path(path).resolve()))
             if normalized not in paths:
                 definition = {"id": normalized, "name": Path(path).stem, "path": path,
-                    "category": "自定义 · 当前会话", "summary": "此插件的功能说明尚未登记。可在插件说明文件中补充用途和配置。",
-                    "description": "已由当前会话加载的自定义采集插件。功能需要由插件作者登记，界面不会从文件名推断用途。",
+                    "category": "自定义 · 当前项目", "summary": "此插件的功能说明尚未登记。可在插件说明文件中补充用途和配置。",
+                    "description": "已由当前项目加载的自定义采集插件。功能需要由插件作者登记，界面不会从文件名推断用途。",
                     "functions": ["当前用于逻辑源：" + source], "parameters": config,
                     "notes": "在 plugins.json 中登记插件名称、功能和参数后，可显示完整说明。",
                     "mode": "custom", "artwork": "plugins", "presets": []}
@@ -231,7 +234,7 @@ class PluginCenter(QWidget):
                 "已停用" if disabled else "已启用 · 待开始" if sources else "未启用")
             card.status.setStyleSheet(ALERT_STYLE if faulted or not exists else RUNNING_STYLE if running else "")
             card.runtime.setText(f"采集源 {len(sources)} 个 · 已记录 {sum(source['recorded'] for source in sources):,} 帧" if sources else
-                "启用插件后就绪，由顶部“开始采集”按钮开始采集。")
+                "启用插件后就绪，由“项目设置”中的“开始采集”按钮开始采集。")
             available = exists and not busy and not closing and (not active or ready)
             card.start_button.setEnabled(available and (not sources or disabled))
             card.stop_button.setEnabled(available and bool(sources) and not disabled)
