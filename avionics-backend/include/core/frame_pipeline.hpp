@@ -1,5 +1,6 @@
 #pragma once
 #include "core/archive.hpp"
+#include "core/parameter_interfaces.hpp"
 #include <condition_variable>
 #include <deque>
 #include <map>
@@ -7,16 +8,6 @@
 #include <thread>
 
 namespace avionics {
-class IParameterDecoder {
-public:
-    virtual ~IParameterDecoder() = default;
-    virtual std::vector<ParameterSample> decode(const RawFrame&) = 0;
-};
-class IParameterConsumer {
-public:
-    virtual ~IParameterConsumer() = default;
-    virtual void consume(const ParameterSample&) = 0;
-};
 struct SourceCounters { std::uint64_t accepted{}, completed{}, dropped{}; };
 struct PipelineStats {
     std::uint64_t accepted{}, completed{}, dropped{}, decode_errors{}, unsupported{}, samples{};

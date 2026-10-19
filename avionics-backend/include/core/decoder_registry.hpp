@@ -1,5 +1,8 @@
 #pragma once
-#include "core/frame_pipeline.hpp"
+#include "core/parameter_interfaces.hpp"
+#include <map>
+#include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <stdexcept>
 

@@ -1,5 +1,5 @@
 #pragma once
-#include "core/frame_pipeline.hpp"
+#include "core/parameter_interfaces.hpp"
 #include "core/protocol_types.hpp"
 #include <memory>
 #include <span>

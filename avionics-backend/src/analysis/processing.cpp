@@ -43,12 +43,18 @@ CorrelationResult event(const std::string& id, const std::string& outcome, const
     return result;
 }
 }
+TimeQualityProcessor::TimeQualityProcessor(std::vector<ClockDefinition> clocks, std::size_t capacity) : capacity_(capacity) {
+    for (auto& clock : clocks) {
+        const auto key = std::make_pair(clock.source, clock.domain);
+        clocks_.emplace(key, std::move(clock));
+    }
+}
 AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
     AlignedSample out; out.sample = sample;
     if (!sample.valid) out.quality.push_back("invalid_payload");
-    const ClockDefinition* clock = nullptr;
-    for (const auto& candidate : clocks_) if (candidate.source == sample.source && candidate.domain == sample.clock_domain) { clock = &candidate; break; }
-    if (!clock) { out.quality.push_back("unmapped_clock"); return out; }
+    const auto found_clock = clocks_.find({sample.source, sample.clock_domain});
+    if (found_clock == clocks_.end()) { out.quality.push_back("unmapped_clock"); return out; }
+    const auto* clock = &found_clock->second;
     out.time_group = clock->group; out.uncertainty_ns = clock->uncertainty_ns;
     if (clock->offset_ns >= 0) {
         const auto offset = static_cast<std::uint64_t>(clock->offset_ns);
@@ -72,14 +78,24 @@ AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
             sample.sequence - last.sample.sequence != sample.sequence_step)) out.quality.push_back("sequence_gap");
         if (*out.time_ns < last.time_ns || sample.sequence == last.sample.sequence) return out;
     }
-    if (!previous_.contains(key) && previous_.size() >= 4096) throw std::runtime_error("time quality state capacity exceeded");
+    if (!previous_.contains(key) && previous_.size() >= capacity_) throw std::runtime_error("time quality state capacity exceeded");
     previous_.insert_or_assign(key, Last{sample, *out.time_ns});
     return out;
 }
 ProcessingService::ProcessingService(BackendConfiguration config, std::shared_ptr<IAnalysisSink> sink)
-    : config_(std::move(config)), quality_(config_.clocks), sink_(std::move(sink)),
+    : config_(std::move(config)), quality_(config_.clocks, config_.max_parameter_states), sink_(std::move(sink)),
       pairs_(config_.consistency.size()), responses_(config_.responses.size()) {
     if (!sink_) throw std::invalid_argument("analysis sink is required");
+    for (std::size_t i = 0; i < config_.consistency.size(); ++i) {
+        const auto& rule = config_.consistency[i];
+        consistency_by_input_[{rule.left.source, rule.left.parameter}].push_back(i);
+        consistency_by_input_[{rule.right.source, rule.right.parameter}].push_back(i);
+    }
+    for (std::size_t i = 0; i < config_.responses.size(); ++i) {
+        const auto& rule = config_.responses[i];
+        responses_by_input_[{rule.command.source, rule.command.parameter}].push_back(i);
+        responses_by_input_[{rule.response.source, rule.response.parameter}].push_back(i);
+    }
 }
 void ProcessingService::emit(CorrelationResult result) {
     sink_->result(result);
@@ -106,10 +122,11 @@ void ProcessingService::consume(const ParameterSample& sample) {
     processConsistency(aligned); processResponse(aligned);
 }
 void ProcessingService::processConsistency(const AlignedSample& sample) {
-    for (std::size_t i = 0; i < config_.consistency.size(); ++i) {
+    const auto found = consistency_by_input_.find({sample.sample.source, sample.sample.parameter_id});
+    if (found == consistency_by_input_.end()) return;
+    for (std::size_t i : found->second) {
         const auto& rule = config_.consistency[i]; auto& pair = pairs_[i];
-        const bool left = rule.left.matches(sample.sample), right = rule.right.matches(sample.sample);
-        if (!left && !right) continue;
+        const bool left = rule.left.matches(sample.sample);
         auto& side = left ? pair.left : pair.right;
         const bool changed = side && !sameEpoch(*side, sample);
         if (changed || !sample.usable()) { pair.left.reset(); pair.right.reset(); }
@@ -134,10 +151,11 @@ void ProcessingService::processConsistency(const AlignedSample& sample) {
     }
 }
 void ProcessingService::processResponse(const AlignedSample& sample) {
-    for (std::size_t i = 0; i < config_.responses.size(); ++i) {
+    const auto found = responses_by_input_.find({sample.sample.source, sample.sample.parameter_id});
+    if (found == responses_by_input_.end()) return;
+    for (std::size_t i : found->second) {
         const auto& rule = config_.responses[i]; auto& state = responses_[i];
         const bool command = rule.command.matches(sample.sample), response = rule.response.matches(sample.sample);
-        if (!command && !response) continue;
         auto& previous = command ? state.command : state.response;
         const bool boundary = previous && !sameEpoch(*previous, sample);
         const auto value = numeric(sample.sample.value);

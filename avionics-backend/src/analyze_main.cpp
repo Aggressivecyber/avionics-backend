@@ -1,4 +1,5 @@
 #include "core/processing.hpp"
+#include "core/archive.hpp"
 #include "core/demo_fixture.hpp"
 #include "core/path.hpp"
 #include <iostream>

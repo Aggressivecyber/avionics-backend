@@ -2,6 +2,7 @@
 #include "plugin_api/bus_plugin.h"
 #include <charconv>
 #include <cmath>
+#include <fstream>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -71,6 +72,11 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
     if (metadata == sections.end()) throw std::invalid_argument("missing [dictionary]");
     if (take(metadata->second, "schema") != "1") throw std::invalid_argument("unsupported configuration schema");
     config.version = take(metadata->second, "version"); empty(metadata->second); sections.erase(metadata);
+    if (auto limits = sections.find("processing"); limits != sections.end()) {
+        config.max_parameter_states = number<std::size_t>(take(limits->second, "max_parameter_states", "4096"));
+        if (!config.max_parameter_states) throw std::invalid_argument("max_parameter_states must be positive");
+        empty(limits->second); sections.erase(limits);
+    }
     std::set<std::string> field_ids;
     for (auto& [section, values] : sections) {
         const auto space = section.find(' ');
@@ -152,6 +158,15 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
         empty(values);
     }
     if (config.fields.empty()) throw std::invalid_argument("dictionary has no parameters");
+    std::set<std::pair<std::string, std::string>> parameter_states;
+    for (const auto& field : config.fields) {
+        if (field.source == "*") {
+            for (const auto& clock : config.clocks) parameter_states.emplace(clock.source, field.id);
+        } else parameter_states.emplace(field.source, field.id);
+    }
+    if (parameter_states.size() > config.max_parameter_states)
+        throw std::invalid_argument("configuration requires " + std::to_string(parameter_states.size()) +
+            " parameter states; max_parameter_states=" + std::to_string(config.max_parameter_states));
     auto validate_selector = [&](const Selector& selected) {
         for (const auto& field : config.fields)
             if (field.id == selected.parameter && (field.source == selected.source || field.source == "*")) return;

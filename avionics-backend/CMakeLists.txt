@@ -48,6 +48,8 @@ target_link_libraries(bus_analyze PRIVATE bus_core)
 
 include(CTest)
 if(BUILD_TESTING)
+    add_executable(configuration_benchmark tests/configuration_benchmark.cpp)
+    target_link_libraries(configuration_benchmark PRIVATE bus_core)
     add_bus_plugin(bus_incompatible tests/incompatible_plugin.cpp)
     add_library(c_header_check OBJECT tests/c_header_check.c)
     target_link_libraries(c_header_check PRIVATE project_options)

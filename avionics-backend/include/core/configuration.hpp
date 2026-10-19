@@ -1,6 +1,9 @@
 #pragma once
-#include "core/frame_pipeline.hpp"
+#include "core/parameter_interfaces.hpp"
+#include <filesystem>
+#include <map>
 #include <optional>
+#include <tuple>
 
 namespace avionics {
 enum class FieldType { Signed, Unsigned, Float64, Boolean, Enumeration };
@@ -38,6 +41,7 @@ struct ResponseDefinition {
 };
 struct BackendConfiguration {
     std::string version;
+    std::size_t max_parameter_states{4096};
     std::vector<FieldDefinition> fields;
     std::vector<ClockDefinition> clocks;
     std::vector<ConsistencyDefinition> consistency;
@@ -46,9 +50,11 @@ struct BackendConfiguration {
 };
 class DictionaryDecoder final : public IParameterDecoder {
 public:
-    explicit DictionaryDecoder(BackendConfiguration configuration) : config_(std::move(configuration)) {}
+    explicit DictionaryDecoder(BackendConfiguration);
     std::vector<ParameterSample> decode(const RawFrame&) override;
 private:
     BackendConfiguration config_;
+    using InputKey = std::tuple<std::uint32_t, std::uint32_t, std::string>;
+    std::map<InputKey, std::vector<std::size_t>> fields_by_input_;
 };
 }

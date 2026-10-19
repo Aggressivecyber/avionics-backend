@@ -1,5 +1,8 @@
 #pragma once
-#include "core/frame_pipeline.hpp"
+#include "core/parameter_interfaces.hpp"
+#include <deque>
+#include <map>
+#include <mutex>
 #include <tuple>
 
 namespace avionics {

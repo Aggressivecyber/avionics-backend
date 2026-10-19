@@ -55,8 +55,27 @@ void testConfiguration(const std::filesystem::path& path, const std::filesystem:
     replace("schema=1", "schema=2");
     replace("window_ms=5", "window_ms=5\nwindow_ms=5");
     reject(original + "\n[unknown section]\nx=1\n");
+    reject(original + "\n[processing]\nmax_parameter_states=3\n");
+    reject(original + "\n[processing]\nmax_parameter_states=0\n");
     const auto valid = BackendConfiguration::load(path);
     check(valid.fields.size() == 4 && valid.responses.size() == 1 && valid.consistency.size() == 1, "configuration lost rules");
+    const auto budgeted = output / "budgeted.ini";
+    { std::ofstream out(budgeted); out << original << "\n[processing]\nmax_parameter_states=8192\n"; }
+    check(BackendConfiguration::load(budgeted).max_parameter_states == 8192, "explicit state capacity was not loaded");
+    std::ostringstream large_text;
+    large_text << "[dictionary]\nschema=1\nversion=capacity-test\n[clock cap]\ndomain=1\ngroup=host\n";
+    for (int i = 0; i < 4097; ++i)
+        large_text << "\n[parameter p" << i << "]\nsource=cap\nprotocol=65535\nchannel=0\nbit_offset=0\n"
+                   << "bit_width=64\nbyte_order=little\ntype=unsigned\nunit=raw\nmax_age_ms=50\n";
+    reject(large_text.str());
+    { std::ofstream out(budgeted); out << large_text.str() << "\n[processing]\nmax_parameter_states=8192\n"; }
+    const auto large = BackendConfiguration::load(budgeted);
+    auto sink = std::make_shared<MemorySink>(); ProcessingService service(large, sink);
+    RawFrame raw; raw.source = "cap"; raw.protocol = 65535; raw.clock_domain = 1;
+    raw.capture_time_ns = 1000000000; raw.generation = 1; raw.payload.resize(8);
+    for (const auto& decoded : DictionaryDecoder(large).decode(raw)) service.consume(decoded);
+    service.finish();
+    check(service.stats().usable == 4097, "approved state budget still failed during processing");
 }
 void testDictionary() {
     BackendConfiguration cfg; cfg.version = "dict-test";
@@ -85,6 +104,17 @@ void testDictionary() {
     raw.payload = {0x40}; check(std::get<EnumValue>(decode().value).label == "READY", "enum label failed");
     raw.payload = {0xc0}; check(!decode().valid, "unmapped enum must be invalid");
     raw.payload.clear(); check(!decode().valid, "truncated payload must emit invalid sample, not disappear");
+    field.type = FieldType::Unsigned; field.bit_offset = 0; field.bit_width = 8; field.valid_bit.reset();
+    field.id = "exact"; field.source = "a"; field.big_endian = false;
+    auto wildcard = field; wildcard.id = "wildcard"; wildcard.source = "*";
+    auto unrelated = field; unrelated.id = "unrelated"; unrelated.protocol = 2;
+    cfg.fields = {wildcard, unrelated, field}; raw.payload = {7};
+    DictionaryDecoder indexed(cfg);
+    const auto merged = indexed.decode(raw);
+    check(merged.size() == 2 && merged[0].parameter_id == "wildcard" && merged[1].parameter_id == "exact",
+        "indexed exact and wildcard fields changed configuration order");
+    raw.source = "other";
+    check(indexed.decode(raw).size() == 1, "wildcard source was not decoded through index");
 }
 void testTime(const BackendConfiguration& cfg) {
     TimeQualityProcessor quality(cfg.clocks);

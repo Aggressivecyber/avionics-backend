@@ -3,6 +3,7 @@
 #include <bit>
 #include <cmath>
 #include <limits>
+#include <span>
 #include <stdexcept>
 
 namespace avionics {
@@ -19,11 +20,26 @@ std::uint64_t bits(const RawFrame& frame, std::uint32_t offset, std::uint32_t wi
     return result;
 }
 }
+DictionaryDecoder::DictionaryDecoder(BackendConfiguration configuration) : config_(std::move(configuration)) {
+    for (std::size_t i = 0; i < config_.fields.size(); ++i) {
+        const auto& field = config_.fields[i];
+        fields_by_input_[{field.protocol, field.channel, field.source}].push_back(i);
+    }
+}
 std::vector<ParameterSample> DictionaryDecoder::decode(const RawFrame& frame) {
     std::vector<ParameterSample> samples;
-    for (const auto& field : config_.fields) {
-        if (field.protocol != frame.protocol || field.channel != frame.channel ||
-            (field.source != "*" && field.source != frame.source)) continue;
+    std::span<const std::size_t> exact, wildcard;
+    if (auto found = fields_by_input_.find({frame.protocol, frame.channel, frame.source}); found != fields_by_input_.end()) exact = found->second;
+    if (frame.source != "*") {
+        if (auto found = fields_by_input_.find({frame.protocol, frame.channel, "*"}); found != fields_by_input_.end()) wildcard = found->second;
+    }
+    samples.reserve(exact.size() + wildcard.size());
+    while (!exact.empty() || !wildcard.empty()) {
+        std::size_t index;
+        if (wildcard.empty() || (!exact.empty() && exact.front() < wildcard.front())) {
+            index = exact.front(); exact = exact.subspan(1);
+        } else { index = wildcard.front(); wildcard = wildcard.subspan(1); }
+        const auto& field = config_.fields[index];
         ParameterSample sample;
         sample.source = frame.source; sample.parameter_id = field.id; sample.unit = field.unit;
         sample.generation = frame.generation; sample.origin_generation = frame.origin_generation;

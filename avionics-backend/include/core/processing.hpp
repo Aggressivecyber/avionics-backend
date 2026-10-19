@@ -1,5 +1,9 @@
 #pragma once
 #include "core/configuration.hpp"
+#include <deque>
+#include <fstream>
+#include <memory>
+#include <mutex>
 
 namespace avionics {
 struct AlignedSample {
@@ -27,10 +31,11 @@ struct ProcessingStats {
 };
 class TimeQualityProcessor {
 public:
-    explicit TimeQualityProcessor(std::vector<ClockDefinition> clocks) : clocks_(std::move(clocks)) {}
+    explicit TimeQualityProcessor(std::vector<ClockDefinition>, std::size_t capacity = 4096);
     AlignedSample process(const ParameterSample&);
 private:
-    std::vector<ClockDefinition> clocks_;
+    std::map<std::pair<std::string, std::uint32_t>, ClockDefinition> clocks_;
+    std::size_t capacity_;
     struct Last { ParameterSample sample; std::uint64_t time_ns; };
     std::map<std::pair<std::string, std::string>, Last> previous_;
 };
@@ -74,6 +79,7 @@ private:
     std::shared_ptr<IAnalysisSink> sink_;
     std::vector<PairState> pairs_;
     std::vector<ResponseState> responses_;
+    std::map<std::pair<std::string, std::string>, std::vector<std::size_t>> consistency_by_input_, responses_by_input_;
     std::map<std::string, std::uint64_t> watermarks_;
     std::deque<CorrelationResult> history_;
     ProcessingStats stats_;
