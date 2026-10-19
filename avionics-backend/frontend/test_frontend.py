@@ -181,6 +181,7 @@ class FrontendIntegration(unittest.TestCase):
         self.select_source("sensor_b")
         QTest.mouseClick(window.remove_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.sources.rowCount() == 3)
+        self.assertNotIn("采集源：sensor_b", window.source_note.text())
         self.click_project_action(window.end_button)
         wait_until(lambda: not window.client.active)
         metadata = window.last_metadata

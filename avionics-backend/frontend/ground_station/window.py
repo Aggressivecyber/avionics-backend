@@ -818,6 +818,8 @@ class MainWindow(QMainWindow):
             values = [source["id"], states[status["state"]], f"{source['recorded']:,}"]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)
+                if col == 0:
+                    item.setData(Qt.ItemDataRole.UserRole, self.source_configs[source["id"]][1])
                 item.setToolTip(json.dumps(source, ensure_ascii=False, indent=2))
                 if col == 1:
                     item.setForeground(QColor(NEGATIVE if status["state"] == "faulted" else INK))
@@ -931,7 +933,7 @@ class MainWindow(QMainWindow):
         if selected:
             source = json.loads(self.sources.item(self.sources.currentRow(), 0).toolTip())
             status = source["status"]
-            plugin = Path(self.source_configs[selected][1]).resolve()
+            plugin = Path(self.sources.item(self.sources.currentRow(), 0).data(Qt.ItemDataRole.UserRole)).resolve()
             owner = next((definition["name"] for definition in self.plugin_definitions
                           if Path(definition["path"]).resolve() == plugin), plugin.name)
             self.source_note.setText(f"所属插件：{owner}\n采集源：{selected} · 代次 {status['generation']}\n"
