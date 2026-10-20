@@ -85,9 +85,9 @@ python scripts/verify_capture_cli.py --build build-gcc-release
 源码提交后重新配置并构建，确保 `--version` 无 `dirty` 标记，再运行：
 
 ```powershell
-python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/v0.5.0
+python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/AEROBUS-v0.6.0 --freeze-python E:/avionics-tools/aerobus-release-env/Scripts/python.exe
 ```
 
-便携包包含宿主、采集进程、分析程序、两个内置插件、匹配的 MinGW 运行库及许可证、配置、文档、源码导出和 SHA-256 清单。发布使用独立目录，退出旧会话后切换目录；原始归档和旧目录保留，便于回退开发改动。失败替换会尝试恢复旧实例并明确报告结果。
+便携包包含 Qt 桌面程序、Python/Qt 运行库、宿主、采集进程、分析程序、三个内置设备插件、匹配的 MinGW 运行库及许可证、配置、素材、文档、源码导出和 SHA-256 清单。发布使用独立目录，退出旧会话后切换目录；原始归档和旧目录保留，便于回退开发改动。失败替换会尝试恢复旧实例并明确报告结果。
 
 Linux 路径提供 OpenSSL Crypto、POSIX 进程组和父进程退出处理实现，需安装 OpenSSL 开发包。Windows 与 Ubuntu CI 配置已提供，远端 CI 与 Linux 原生运行未在本地验收。Linux 构建命令为常规 `cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release`、`cmake --build build`、`ctest --test-dir build --output-on-failure`。
