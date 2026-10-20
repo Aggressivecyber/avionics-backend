@@ -839,7 +839,9 @@ class MainWindow(QMainWindow):
         self.capture_button.setEnabled(ready and self.client.is_ready and not self.busy
                                        and not self.plugin_action_pending and not self.client.closing)
         if self.project and not self.client.active and self.relation_process.state() == QProcess.ProcessState.NotRunning:
-            self.capture_button.setEnabled(bool(self.project.document["sources"]) and not self.config_editor.dirty)
+            enabled_paths = {os.path.normcase(str(Path(card.definition["path"]).resolve())) for key,card in self.plugin_center.cards.items() if key not in self.disabled_plugins}
+            prepared = any(os.path.normcase(str(Path(source[1]).resolve())) in enabled_paths for source in self.project.sources(self.bin_dir))
+            self.capture_button.setEnabled(prepared and not self.config_editor.dirty)
         self.capture_button.setToolTip("启动本项目中已启用且就绪的采集源，开始接收数据并自动保存。" if ready else
             "启用所需插件或添加采集源后，才能开始采集。正在采集或已停用的来源不会重复启动。")
 
