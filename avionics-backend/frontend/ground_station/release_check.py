@@ -15,7 +15,7 @@ from unittest.mock import patch
 from PySide6.QtCore import QPoint, QProcess, Qt
 from PySide6.QtGui import QFont, QFontDatabase
 from PySide6.QtTest import QTest
-from PySide6.QtWidgets import QApplication, QTabWidget
+from PySide6.QtWidgets import QApplication, QTableWidget, QTabWidget
 
 from .jobs import start_analysis_process
 from .project import read_shared, write_json
@@ -115,14 +115,17 @@ def main(arguments=None):
         wait(lambda:not history.query.isRunning() and not history.query_pending and len(history.plot.lanes)==2)
         assert len(history.plot.lanes)==2
         full_count = sum(s["count"] for lane in history.plot.lanes for s in lane["series"])
+        full_end = history.end.value()
         half = history.end.value()/2
-        history.end.setValue(half); history.load_query(); wait(lambda:not history.query.isRunning())
+        history.end.setValue(half); history.load_query()
+        wait(lambda:not history.query.isRunning() and not history.query_pending and history.plot.end<=half+.000001)
         assert history.plot.end <= half+.000001
         assert sum(s["count"] for lane in history.plot.lanes for s in lane["series"]) < full_count
         history.start.setValue(history.end.value()+1)
         history.load_query()
         assert "结束时间须大于开始时间" in history.status.text()
-        history.full_range(); wait(lambda:not history.query.isRunning())
+        history.full_range()
+        wait(lambda:not history.query.isRunning() and not history.query_pending and abs(history.plot.end-full_end)<=.000001)
         QTest.mouseClick(history.plot,Qt.MouseButton.LeftButton,pos=QPoint(history.plot.width()//2,history.plot.height()//4))
         assert history.raw_button.isEnabled() and history.selected_evidence[0]["record_index"]>0
         for size in ((1160,780),(1440,900),(1920,1080)):
@@ -174,7 +177,8 @@ def main(arguments=None):
         second.navigate(5); h = second.history_page
         wait(lambda:h.catalog_loaded and not h.query.isRunning())
         h.parameters.item(0).setCheckState(Qt.CheckState.Checked); wait(lambda:not h.query.isRunning())
-        h.compare.setCurrentIndex(1); wait(lambda:not h.query.isRunning())
+        h.compare.setCurrentIndex(1)
+        wait(lambda:not h.query.isRunning() and not h.query_pending and bool(h.plot.lanes) and len(h.plot.lanes[0]["series"])==2)
         assert len(h.plot.lanes[0]["series"])==2
         screenshot(second,"project-reopened-comparison.png")
         receipt["checks"].append({"name":"portable_project_reopen_and_second_capture","runs":2,"original_archive_unchanged":True})
@@ -189,6 +193,10 @@ def main(arguments=None):
         tabs = window.evidence_dialog.findChild(QTabWidget)
         assert tabs.count()==3
         tabs.setCurrentIndex(1)
+        field_table = tabs.widget(1).findChild(QTableWidget)
+        for row in range(field_table.rowCount()):
+            for column in range(4):
+                assert field_table.columnWidth(column) >= field_table.fontMetrics().horizontalAdvance(field_table.item(row,column).text())+22
         screenshot(window.evidence_dialog,"1553b-record-fields.png",1000,680)
         window.evidence_dialog.close()
         receipt["checks"].append({"name":"1553b_raw_record_fields_and_parameter_provenance","status":"passed"})
