@@ -141,6 +141,7 @@ class MainWindow(QMainWindow):
         self.current_run = None
         self.restore_sources = []
         self.capture_after_ready = False
+        self.capture_started = False
         self.relation_process = QProcess(self)
         self.relation_buffer = bytearray()
         self.latest_complete = None
@@ -255,7 +256,6 @@ class MainWindow(QMainWindow):
             nav.setIconSize(QSize(20, 20))
             navigation.addWidget(nav)
         navigation.addStretch()
-        navigation.addWidget(label("原始归档 · 参数分析", "muted"))
         navigation.addWidget(label(f"v{__version__}", "muted"))
         self.capture_controls = QFrame()
         self.capture_controls.setObjectName("captureControls")
@@ -414,7 +414,7 @@ class MainWindow(QMainWindow):
         self.reload_configuration_button = button("放弃修改", self.reload_configuration)
         self.reload_configuration_button.setToolTip("重新载入当前已保存配置，放弃尚未保存的表单修改。")
         self.save_configuration_button = button("保存配置", self.save_configuration, True, icon_name="settings")
-        self.save_configuration_button.setToolTip("校验全部参数、引用和规则，成功后保存到根目录的 config/，用于下一项目；原模板保留。")
+        self.save_configuration_button.setToolTip("校验并保存参数与规则；若项目正在准备，会封存当前准备记录并保留插件设置，下次开始采集使用新配置。原模板和已有归档保留。")
         actions.addWidget(self.reload_configuration_button)
         actions.addWidget(self.save_configuration_button)
         editor_layout.addLayout(actions)
@@ -690,8 +690,15 @@ class MainWindow(QMainWindow):
                 self.config_editor.set_dirty(False)
                 self.config_feedback.setText("已保存")
                 self.update_relative_paths()
-                self.set_project_state("等待中", "配置已通过后端校验，下一项目使用当前保存版本。")
-                self.message.setText("配置已保存，可新建项目。")
+                if self.project:
+                    self.project.set_configuration(path)
+                    self.project.save()
+                if self.client.active:
+                    self.end_session()
+                    self.message.setText("配置已保存，正在结束准备记录；下次开始采集使用新配置。")
+                else:
+                    self.set_project_state("等待中", "配置已通过后端校验，下次采集使用当前保存版本。")
+                    self.message.setText("配置已保存，可以开始下一次采集或新建项目。")
                 self.message.show()
         self.on_active(self.client.active)
         if self.close_pending:
@@ -782,6 +789,7 @@ class MainWindow(QMainWindow):
                 self.project.set_configuration(configuration)
                 self.restore_sources = self.project.sources(self.bin_dir) if self.capture_after_ready else []
             self.current_run = self.project.new_run()
+            self.capture_started = False
             configuration = self.project.resource(self.project.document["configuration"])
             write_json(self.project.resource(self.current_run["archive"]).parent / "run.json",{**self.current_run,"steps":self.project.document["steps"]})
             self.archive = self.project.resource(self.current_run["archive"])
@@ -835,7 +843,9 @@ class MainWindow(QMainWindow):
                     for key, sources in self.plugin_center.sources_by_plugin.items()
                     if key not in self.disabled_plugins for source in sources)
         self.capture_button.setEnabled(ready and self.client.is_ready and not self.busy
-                                       and not self.plugin_action_pending and not self.client.closing)
+                                       and not self.plugin_action_pending and not self.client.closing
+                                       and not self.config_editor.dirty
+                                       and self.configuration_process.state() == QProcess.ProcessState.NotRunning)
         if self.project and not self.client.active and self.relation_process.state() == QProcess.ProcessState.NotRunning:
             enabled_paths = {os.path.normcase(str(Path(card.definition["path"]).resolve())) for key,card in self.plugin_center.cards.items() if key not in self.disabled_plugins}
             prepared = any(os.path.normcase(str(Path(source[1]).resolve())) in enabled_paths for source in self.project.sources(self.bin_dir))
@@ -848,6 +858,7 @@ class MainWindow(QMainWindow):
             self.capture_after_ready = True
             self.new_session()
             return
+        self.capture_started = True
         self.plugin_action_pending = True
         for key, sources in self.plugin_center.sources_by_plugin.items():
             if key not in self.disabled_plugins:
@@ -1003,6 +1014,8 @@ class MainWindow(QMainWindow):
                 self.source_configs[arguments[0]] = tuple(arguments)
             elif command == "remove":
                 del self.source_configs[arguments[0]]
+            elif command == "start":
+                self.capture_started = True
             self.log_message(command + " " + (str(arguments[0]) if arguments else "") + " · 完成")
             if command in {"add","replace","remove"} and self.project:
                 self.project.save_sources(self.source_configs,self.bin_dir,self.disabled_plugins)
@@ -1144,22 +1157,31 @@ class MainWindow(QMainWindow):
         if not active:
             self.plugin_action_pending = False
         editable = not active and self.configuration_process.state() == QProcess.ProcessState.NotRunning and self.relation_process.state() == QProcess.ProcessState.NotRunning
-        for widget in (self.storage_button, self.storage_label, self.project_name, self.config_editor):
+        prepared = (active and self.client.is_ready and not self.client.closing and not self.capture_started
+                    and not self.busy and not self.capture_after_ready
+                    and self.configuration_process.state() == QProcess.ProcessState.NotRunning)
+        configuration_editable = editable or prepared
+        for widget in (self.storage_button, self.storage_label, self.project_name):
             widget.setEnabled(editable)
+        self.config_editor.setEnabled(configuration_editable)
         for widget in (self.new_button, self.config_button, self.preset_selector):
             widget.setEnabled(editable and not self.config_editor.dirty)
         for widget in (self.open_project_button,self.recent_projects,self.save_project_button):
             widget.setEnabled(editable and self.relation_process.state() == QProcess.ProcessState.NotRunning)
-        self.save_configuration_button.setEnabled(editable and self.config_editor.dirty)
-        self.reload_configuration_button.setEnabled(editable and self.config_editor.dirty)
+        self.save_configuration_button.setEnabled(configuration_editable and self.config_editor.dirty)
+        self.reload_configuration_button.setEnabled(configuration_editable and self.config_editor.dirty)
+        locked_note = "本次采集已开始；请先“结束并封存”后编辑。"
+        if active and self.capture_started:
+            self.config_feedback.setText(locked_note)
+        elif self.config_feedback.text() == locked_note:
+            self.config_feedback.setText("已保存")
         self.end_button.setEnabled(active and not self.client.closing)
         self.update_source_actions()
         self.refresh_plugins()
 
     def on_busy(self, busy):
         self.busy = busy
-        self.update_source_actions()
-        self.refresh_plugins()
+        self.on_active(self.client.active)
 
     def update_source_actions(self):
         enabled = self.client.active and self.client.is_ready and not self.client.closing and not self.busy

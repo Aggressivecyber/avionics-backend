@@ -120,7 +120,7 @@ class ConfigurationEditor(QWidget):
         self.section = None
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
-        note = QLabel("选择左侧参数或规则，在右侧修改。保存时由实际后端校验；项目运行期间锁定。")
+        note = QLabel("选择左侧参数或规则，在右侧修改。准备阶段可编辑，保存后用于下次采集；采集开始后请先结束并封存再编辑。")
         note.setWordWrap(True)
         note.setObjectName("muted")
         root.addWidget(note)

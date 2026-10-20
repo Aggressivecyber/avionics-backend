@@ -839,8 +839,29 @@ class FrontendIntegration(unittest.TestCase):
         self.assertTrue(window.grab().save(str(args.output / "configuration-saved.png")))
         self.click_project_action(window.new_button)
         wait_until(lambda: window.client.is_ready)
-        self.assertFalse(editor.isEnabled())
+        self.assertTrue(editor.isEnabled(), "准备阶段应允许点击修改字典与规则")
         self.assertFalse(window.storage_label.isEnabled())
+        editor.group.setCurrentIndex(0)
+        for row in range(editor.entries.count()):
+            if editor.entries.item(row).data(Qt.ItemDataRole.UserRole) == "parameter temperature_a":
+                item = editor.entries.item(row)
+                QTest.mouseClick(editor.entries.viewport(), Qt.MouseButton.LeftButton,
+                                 pos=editor.entries.visualItemRect(item).center())
+                break
+        field = editor.fields["offset"]
+        editor.scroll.ensureWidgetVisible(field)
+        QTest.mouseClick(field, Qt.MouseButton.LeftButton)
+        QTest.keyClick(field, Qt.Key.Key_A, Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(field, "2")
+        self.assertEqual(field.text(), "2")
+        self.assertTrue(window.save_configuration_button.isEnabled())
+        self.assertFalse(window.capture_button.isEnabled())
+        QTest.mouseClick(window.save_configuration_button, Qt.MouseButton.LeftButton)
+        wait_until(lambda:window.configuration_candidate is None)
+        wait_until(lambda:not window.client.active and window.relation_process.state()==QProcess.ProcessState.NotRunning)
+        self.assertEqual(window.config_feedback.text(), "已保存")
+        saved = window.configuration_path
+        self.assertEqual(editor.document["parameter temperature_a"]["offset"], "2")
         window.navigate(2)
         QTest.mouseClick(window.plugin_center.cards["demo"].start_button, Qt.MouseButton.LeftButton)
         wait_until(lambda: window.capture_button.isEnabled())
@@ -855,6 +876,8 @@ class FrontendIntegration(unittest.TestCase):
             self.assertLess(bounds.right(), window.heading.mapTo(window, QPoint()).x())
         self.click_project_action(window.capture_button)
         wait_until(lambda: window.parameter_model.rowCount() == 4)
+        self.assertFalse(editor.isEnabled())
+        self.assertIn("结束并封存", window.config_feedback.text())
         temperature = next(sample for sample in window.parameter_model.rows if sample["parameter"] == "temperature_a")
         self.assertGreater(temperature["value"], 40)
         self.assertEqual(window.recording_status.text(), "采集中")
@@ -889,6 +912,7 @@ class FrontendIntegration(unittest.TestCase):
             "form_editing_roundtrip": True, "add_remove_and_rename": True,
             "backend_rejects_invalid_field": True, "original_template_preserved": True,
             "edited_config_used_by_live_decoder": True, "configuration_sha256": digest(saved),
+            "prepared_configuration_click_edit_save_and_capture": True,
             "archive_configuration_snapshot_matches": True, "root_editable_when_idle": True,
             "footer_relative_path_and_absolute_tooltip": True, "new_root_preserves_old_archive": True,
             "left_bottom_controls_visible_on_all_pages": True, "short_states": ["等待中", "采集中", "已封存"]})

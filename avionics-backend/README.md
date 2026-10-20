@@ -1,4 +1,4 @@
-# 地面总线监测工作台 · v0.6.0
+# 地面总线监测工作台 · v0.6.1
 
 Release版解压后双击 `AEROBUS.exe`，已随包提供 Python／Qt 运行库。新增项目保存、打开和多次采集管理；自定义公式基于完整参数文件计算、保存并可离线复算。历史工作区提供时间范围、多曲线、采集记录比较、原始报文查看、试验步骤、备注及报告／完整CSV导出。使用方法、数据目录和构建验收见 [v0.6桌面交付说明](docs/release-v0.6.md)。
 
@@ -85,7 +85,7 @@ python scripts/verify_capture_cli.py --build build-gcc-release
 源码提交后重新配置并构建，确保 `--version` 无 `dirty` 标记，再运行：
 
 ```powershell
-python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/AEROBUS-v0.6.0 --freeze-python E:/avionics-tools/aerobus-release-env/Scripts/python.exe
+python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/AEROBUS-v0.6.1 --freeze-python E:/avionics-tools/aerobus-release-env/Scripts/python.exe
 ```
 
 便携包包含 Qt 桌面程序、Python/Qt 运行库、宿主、采集进程、分析程序、三个内置设备插件、匹配的 MinGW 运行库及许可证、配置、素材、文档、源码导出和 SHA-256 清单。发布使用独立目录，退出旧会话后切换目录；原始归档和旧目录保留，便于回退开发改动。失败替换会尝试恢复旧实例并明确报告结果。

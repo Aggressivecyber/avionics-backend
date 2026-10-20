@@ -214,6 +214,41 @@ def main(arguments=None):
         window.end_session(); wait(lambda:not window.client.active)
         wait(lambda:window.relation_process.state()==QProcess.ProcessState.NotRunning)
         receipt["checks"].append({"name":"new_project_preserves_previous_project_identity","status":"passed"})
+        editing = MainWindow(args.bin_dir,output/"配置编辑回归",configuration)
+        windows.append(editing); editing.show(); editing.start_demo()
+        wait(lambda:editing.capture_button.isEnabled())
+        editing.navigate(4); editing.project_tabs.setCurrentIndex(1)
+        editor = editing.config_editor
+        assert editor.isEnabled() and editing.latest_snapshot["recorded"]==0
+        for row in range(editor.entries.count()):
+            if editor.entries.item(row).data(Qt.ItemDataRole.UserRole)=="parameter temperature_a":
+                QTest.mouseClick(editor.entries.viewport(),Qt.MouseButton.LeftButton,
+                                 pos=editor.entries.visualItemRect(editor.entries.item(row)).center())
+                break
+        field = editor.fields["offset"]
+        editor.scroll.ensureWidgetVisible(field); QTest.qWait(30)
+        QTest.mouseClick(field,Qt.MouseButton.LeftButton)
+        QTest.keyClick(field,Qt.Key.Key_A,Qt.KeyboardModifier.ControlModifier)
+        QTest.keyClicks(field,"2")
+        assert field.text()=="2" and editing.save_configuration_button.isEnabled()
+        assert not editing.capture_button.isEnabled()
+        screenshot(editing,"configuration-prepared-editable.png")
+        QTest.mouseClick(editing.save_configuration_button,Qt.MouseButton.LeftButton)
+        wait(lambda:editing.configuration_candidate is None)
+        wait(lambda:not editing.client.active and editing.relation_process.state()==QProcess.ProcessState.NotRunning)
+        saved = editing.configuration_path
+        assert editing.config_feedback.text()=="已保存" and len(editing.project.sources(args.bin_dir))==4
+        editing.start_capture(); wait(lambda:editing.parameter_model.rowCount()==4)
+        assert next(row for row in editing.parameter_model.rows if row["parameter"]=="temperature_a")["value"]>21.9
+        assert not editor.isEnabled() and "结束并封存" in editing.config_feedback.text()
+        editing.end_session(); wait(lambda:not editing.client.active)
+        wait(lambda:editing.relation_process.state()==QProcess.ProcessState.NotRunning)
+        assert editing.last_metadata["configuration_sha256"]==digest(saved)
+        assert Path(str(editing.archive)+".analysis/configuration.ini").read_bytes()==saved.read_bytes()
+        assert editing.project.resource(editing.project.document["configuration"]).read_bytes()==saved.read_bytes()
+        assert editor.isEnabled()
+        receipt["checks"].append({"name":"prepared_configuration_mouse_edit_save_and_capture","status":"passed",
+            "configuration_sha256":digest(saved),"live_uses_saved_configuration":True})
     finally:
         sys.excepthook = original_hook
         write_json(output/"receipt.json",receipt)
