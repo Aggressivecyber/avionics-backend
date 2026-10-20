@@ -84,7 +84,7 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda:self.window.relation_process.state() == QProcess.ProcessState.NotRunning,15000)
         wait_until(lambda:self.window.offline_relation_process.state() == QProcess.ProcessState.NotRunning,15000)
         self.window.close()
-        QTest.qWait(20)
+        wait_until(lambda:not self.window.isVisible())
 
     def select_source(self, source):
         def exists():
@@ -286,6 +286,17 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: not self.window.client.active and not self.window.isVisible())
         self.assertIsNotNone(self.window.last_metadata)
         self.assertFalse(self.window.isVisible())
+        # The worker can finish before its queued GUI callbacks reach closeEvent.
+        self.window.show()
+        history = self.window.history_page
+        history.load_query()
+        deadline = time.monotonic() + 10
+        while history.query.isRunning() and time.monotonic() < deadline:
+            time.sleep(.005)
+        self.assertFalse(history.query.isRunning())
+        self.assertTrue(history.query_active)
+        self.window.close()
+        wait_until(lambda: not self.window.isVisible() and not history.query_active)
         failed_client = BackendClient(self.data_dir / "missing-bin", self.window)
         failures = []
         failed_client.failed.connect(failures.append)

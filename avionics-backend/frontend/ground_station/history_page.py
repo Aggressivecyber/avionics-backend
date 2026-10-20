@@ -5,7 +5,7 @@ from contextlib import closing
 from pathlib import Path
 import sqlite3
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QThread, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractSpinBox, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit,
@@ -159,6 +159,7 @@ class HistoryPlot(QWidget):
 class HistoryPage(QWidget):
     evidence_requested = Signal(object, object)
     export_requested = Signal(object)
+    idle = Signal()
 
     def __init__(self):
         super().__init__()
@@ -311,12 +312,16 @@ class HistoryPage(QWidget):
         self.query_active = True
         self.query.start(); self.status.setText("正在查询完整历史…")
 
+    @Slot()
     def query_finished(self):
         self.query_active = False
         if self.query_pending:
             self.query_pending = False
             self.load_query()
+        if not self.query_active:
+            self.idle.emit()
 
+    @Slot(object)
     def show_result(self,result):
         if result["context"] != self.context_generation:
             return

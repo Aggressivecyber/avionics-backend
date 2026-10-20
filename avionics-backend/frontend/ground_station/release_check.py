@@ -214,16 +214,16 @@ def main(arguments=None):
         window.end_session(); wait(lambda:not window.client.active)
         wait(lambda:window.relation_process.state()==QProcess.ProcessState.NotRunning)
         receipt["checks"].append({"name":"new_project_preserves_previous_project_identity","status":"passed"})
-        receipt["success"] = True
-        write_json(output/"receipt.json",receipt)
-        print(json.dumps({"success":True,"checks":len(receipt["checks"]),"output":str(output)},ensure_ascii=False))
     finally:
+        sys.excepthook = original_hook
+        write_json(output/"receipt.json",receipt)
         for window in windows:
             if window.client.active: window.end_session(); wait(lambda:not window.client.active)
             wait(lambda:window.relation_process.state()==QProcess.ProcessState.NotRunning)
             window.close(); wait(lambda:not window.isVisible())
-        sys.excepthook = original_hook
-        if not receipt["success"]: write_json(output/"receipt.json",receipt)
+    receipt["success"] = True
+    write_json(output/"receipt.json",receipt)
+    print(json.dumps({"success":True,"checks":len(receipt["checks"]),"output":str(output)},ensure_ascii=False))
 
 
 if __name__ == "__main__":

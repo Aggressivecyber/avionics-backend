@@ -304,6 +304,7 @@ class MainWindow(QMainWindow):
         self.history_page = HistoryPage()
         self.history_page.evidence_requested.connect(self.request_raw_record)
         self.history_page.export_requested.connect(self.export_run)
+        self.history_page.idle.connect(self.history_idle)
         self.pages.addWidget(self.history_page)
         sheet_layout.addWidget(self.pages, 1)
         self.message = label("就绪 · 先启用插件，再点击左下角“开始采集”。", "muted")
@@ -1548,6 +1549,10 @@ class MainWindow(QMainWindow):
         self.resize(min(self.width(), available.width() - (frame.width() - self.width())),
                     min(self.height(), available.height() - (frame.height() - self.height())))
 
+    def history_idle(self):
+        if self.close_pending:
+            self.close()
+
     def closeEvent(self, event):
         if self.configuration_process.state() != QProcess.ProcessState.NotRunning:
             self.close_pending = True
@@ -1566,7 +1571,6 @@ class MainWindow(QMainWindow):
             event.ignore()
         elif self.history_page.query_active:
             self.close_pending = True
-            self.history_page.query.finished.connect(self.close)
             event.ignore()
         else:
             if self.project:
