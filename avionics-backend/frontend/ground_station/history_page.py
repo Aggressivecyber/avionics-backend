@@ -24,6 +24,7 @@ class HistoryQuery(QThread):
     def __init__(self, primary, comparison, selections, group, start, end, page, anomalies, parent):
         super().__init__(parent)
         self.arguments = primary, comparison, selections, group, start, end, page, anomalies
+        self.context = parent.context_generation
 
     def run(self):
         primary, comparison, selections, group, start, end, page, anomalies = self.arguments
@@ -66,7 +67,7 @@ class HistoryQuery(QThread):
                         series.append({"label": entry[2], "points": points, "archive": entry[1], "count": count})
                 lanes.append({"name": parameter, "unit": unit, "series": series})
             self.result.emit({"catalog": catalog, "groups": groups, "group": group, "duration": duration, "anchor": anchor,
-                              "start": start, "end": end, "events": events, "event_total": total, "relations": relation_catalog, "lanes": lanes})
+                              "start": start, "end": end, "events": events, "event_total": total, "relations": relation_catalog, "lanes": lanes,"context":self.context})
         except (sqlite3.Error, OSError, ValueError, KeyError) as error:
             self.failed.emit("历史查询失败：" + str(error))
 
@@ -166,6 +167,7 @@ class HistoryPage(QWidget):
         self.selected_evidence = None
         self.catalog_loaded = False
         self.query_pending = False
+        self.query_active = False
         self.context_generation = 0
         layout = QVBoxLayout(self); layout.setContentsMargins(0,0,0,0)
         toolbar = QHBoxLayout()
@@ -283,7 +285,7 @@ class HistoryPage(QWidget):
         run = self.runs.currentData()
         if not run or not self.project:
             return
-        if self.query is not None and self.query.isRunning():
+        if self.query_active:
             self.query_pending = True
             return
         if self.end.value() <= self.start.value() and (self.start.value() > 0 or self.end.value() > 0):
@@ -301,18 +303,22 @@ class HistoryPage(QWidget):
         comparison = self.compare.currentData()
         self.query = HistoryQuery(entry,self.entry(comparison) if comparison else None,selected,self.group.currentText(),
                                   self.start.value(),self.end.value(),self.event_page,self.anomalies.isChecked(),self)
-        generation = self.context_generation
-        self.query.result.connect(lambda result:self.show_result(result) if generation == self.context_generation else None)
+        self.query.result.connect(self.show_result)
         self.query.failed.connect(self.status.setText)
         self.query.finished.connect(self.query_finished)
+        self.query.finished.connect(self.query.deleteLater)
+        self.query_active = True
         self.query.start(); self.status.setText("正在查询完整历史…")
 
     def query_finished(self):
+        self.query_active = False
         if self.query_pending:
             self.query_pending = False
             self.load_query()
 
     def show_result(self,result):
+        if result["context"] != self.context_generation:
+            return
         self.group.blockSignals(True)
         self.group.clear(); self.group.addItems(result["groups"]); self.group.setCurrentText(result["group"]); self.group.blockSignals(False)
         if not self.catalog_loaded:

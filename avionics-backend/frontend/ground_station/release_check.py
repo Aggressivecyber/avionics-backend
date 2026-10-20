@@ -110,22 +110,22 @@ def main(arguments=None):
             assert db.execute("SELECT count(*) FROM relations WHERE usable=0").fetchone()[0]>0
         receipt["checks"].append({"name":"complete_relations_despite_display_omission","samples":summary["samples"],"results":summary["results"],"display_omitted":window.display_omitted})
         window.navigate(5); history = window.history_page
-        wait(lambda:history.catalog_loaded and not history.query.isRunning())
+        wait(lambda:history.catalog_loaded and not history.query_active)
         for i in range(min(2,history.parameters.count())): history.parameters.item(i).setCheckState(Qt.CheckState.Checked)
-        wait(lambda:not history.query.isRunning() and not history.query_pending and len(history.plot.lanes)==2)
+        wait(lambda:not history.query_active and not history.query_pending and len(history.plot.lanes)==2)
         assert len(history.plot.lanes)==2
         full_count = sum(s["count"] for lane in history.plot.lanes for s in lane["series"])
         full_end = history.end.value()
         half = history.end.value()/2
         history.end.setValue(half); history.load_query()
-        wait(lambda:not history.query.isRunning() and not history.query_pending and history.plot.end<=half+.000001)
+        wait(lambda:not history.query_active and not history.query_pending and history.plot.end<=half+.000001)
         assert history.plot.end <= half+.000001
         assert sum(s["count"] for lane in history.plot.lanes for s in lane["series"]) < full_count
         history.start.setValue(history.end.value()+1)
         history.load_query()
         assert "结束时间须大于开始时间" in history.status.text()
         history.full_range()
-        wait(lambda:not history.query.isRunning() and not history.query_pending and abs(history.plot.end-full_end)<=.000001)
+        wait(lambda:not history.query_active and not history.query_pending and abs(history.plot.end-full_end)<=.000001)
         QTest.mouseClick(history.plot,Qt.MouseButton.LeftButton,pos=QPoint(history.plot.width()//2,history.plot.height()//4))
         assert history.raw_button.isEnabled() and history.selected_evidence[0]["record_index"]>0
         for size in ((1160,780),(1440,900),(1920,1080)):
@@ -175,10 +175,10 @@ def main(arguments=None):
         assert len(second.project.document["runs"])==2
         assert digest(second.project.resource(original_run["archive"]))==first_digest
         second.navigate(5); h = second.history_page
-        wait(lambda:h.catalog_loaded and not h.query.isRunning())
-        h.parameters.item(0).setCheckState(Qt.CheckState.Checked); wait(lambda:not h.query.isRunning())
+        wait(lambda:h.catalog_loaded and not h.query_active)
+        h.parameters.item(0).setCheckState(Qt.CheckState.Checked); wait(lambda:not h.query_active)
         h.compare.setCurrentIndex(1)
-        wait(lambda:not h.query.isRunning() and not h.query_pending and bool(h.plot.lanes) and len(h.plot.lanes[0]["series"])==2)
+        wait(lambda:not h.query_active and not h.query_pending and bool(h.plot.lanes) and len(h.plot.lanes[0]["series"])==2)
         assert len(h.plot.lanes[0]["series"])==2
         screenshot(second,"project-reopened-comparison.png")
         receipt["checks"].append({"name":"portable_project_reopen_and_second_capture","runs":2,"original_archive_unchanged":True})
@@ -200,6 +200,18 @@ def main(arguments=None):
         screenshot(window.evidence_dialog,"1553b-record-fields.png",1000,680)
         window.evidence_dialog.close()
         receipt["checks"].append({"name":"1553b_raw_record_fields_and_parameter_provenance","status":"passed"})
+        old_project = window.project.path
+        old_name = window.project.document["name"]
+        old_runs = len(window.project.document["runs"])
+        window.project_name.setText("独立项目B")
+        window.new_project(); wait(lambda:window.client.is_ready)
+        assert window.project.path != old_project
+        saved_old = json.loads(old_project.read_text(encoding="utf-8"))
+        assert saved_old["name"]==old_name and len(saved_old["runs"])==old_runs
+        assert window.latest_snapshot.get("recorded",0)==0
+        window.end_session(); wait(lambda:not window.client.active)
+        wait(lambda:window.relation_process.state()==QProcess.ProcessState.NotRunning)
+        receipt["checks"].append({"name":"new_project_preserves_previous_project_identity","status":"passed"})
         receipt["success"] = True
         write_json(output/"receipt.json",receipt)
         print(json.dumps({"success":True,"checks":len(receipt["checks"]),"output":str(output)},ensure_ascii=False))

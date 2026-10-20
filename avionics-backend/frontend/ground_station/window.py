@@ -719,7 +719,6 @@ class MainWindow(QMainWindow):
         changed = directory != self.data_dir
         self.data_dir = directory
         if changed and self.project is not None:
-            self.save_project()
             self.project = None
             self.current_run = None
         self.storage_label.setText(str(directory))
@@ -752,8 +751,6 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))
 
     def new_project(self):
-        if self.project:
-            self.save_project()
         self.project = None
         self.current_run = None
         self.new_session()
@@ -1567,7 +1564,7 @@ class MainWindow(QMainWindow):
             self.close_pending = True
             self.message.setText("正在保存完整分析与报告，完成后关闭。")
             event.ignore()
-        elif self.history_page.query is not None and self.history_page.query.isRunning():
+        elif self.history_page.query_active:
             self.close_pending = True
             self.history_page.query.finished.connect(self.close)
             event.ignore()
