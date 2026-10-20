@@ -4,7 +4,8 @@ from configparser import ConfigParser
 import hashlib
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QLabel, QPlainTextEdit,
-    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+    QHeaderView, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+from .theme import ACCENT
 
 
 class EvidenceDialog(QDialog):
@@ -32,6 +33,7 @@ class EvidenceDialog(QDialog):
         tabs = QTabWidget()
         raw = QPlainTextEdit()
         raw.setReadOnly(True)
+        raw.setStyleSheet("QPlainTextEdit {font-family: Consolas; font-size: 13px;}")
         payload = bytes.fromhex(record["payload_hex"])
         raw.setPlainText("\n".join(f"{offset:06x}  " + " ".join(f"{b:02x}" for b in payload[offset:offset+16])
                                     for offset in range(0, len(payload), 16)))
@@ -53,6 +55,8 @@ class EvidenceDialog(QDialog):
             if record["diagnostics"]:
                 diagnostic = QLabel("解析诊断："+"；".join(record["diagnostics"])); diagnostic.setWordWrap(True); content.addWidget(diagnostic)
             fields = QTableWidget(len(words), 5)
+            fields.setShowGrid(False)
+            fields.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
             fields.setHorizontalHeaderLabels(["字序", "捕获值", "同步类型", "奇校验位", "解释"])
             fields.verticalHeader().hide()
             data_word = 0
@@ -66,15 +70,22 @@ class EvidenceDialog(QDialog):
                     explanation = f"状态：RT {(word>>11)&31} · " + ("、".join(name for name, mask in flags if word & mask) or "状态标志为0")
                 else:
                     explanation = f"数据字 · 无符号整数 {word}" if sync == 1 else "命令/状态同步；解析器未确认字角色"
+                if highlighted:
+                    explanation = "参数 " + evidence["parameter"] + " · " + explanation
                 for col, text in enumerate((str(i+1), f"0x{word:04X}", "命令/状态" if sync == 0 else "数据", str(parity), explanation)):
                     item = QTableWidgetItem(text)
+                    item.setToolTip(text)
                     if highlighted:
                         item.setBackground(QColor("#edf5f5"))
+                        item.setForeground(QColor(ACCENT))
                     fields.setItem(i, col, item)
                 if sync == 1:
                     data_word += 1
             fields.resizeColumnsToContents()
-            fields.horizontalHeader().setStretchLastSection(True)
+            for column,width in enumerate((55,110,120,110)):
+                fields.horizontalHeader().setSectionResizeMode(column,QHeaderView.ResizeMode.Fixed)
+                fields.setColumnWidth(column,width)
+            fields.horizontalHeader().setSectionResizeMode(4,QHeaderView.ResizeMode.Stretch)
             content.addWidget(fields)
             content.addWidget(QLabel("浅色行标出选中参数涉及的数据字；位偏移、位宽和换算取自本次采集的配置快照。"))
             tabs.addTab(page, "1553B字与状态")

@@ -202,6 +202,7 @@ class HistoryPage(QWidget):
         for w in (QLabel("规则事件 · 双击定位"),self.anomalies,self.event_count,self.previous,self.next): event_controls.addWidget(w)
         right_layout.addLayout(event_controls)
         self.events = QTableWidget(0,4); self.events.setHorizontalHeaderLabels(["规则","结果","相对时间 / s","原始记录"])
+        self.events.setShowGrid(False)
         self.events.verticalHeader().hide(); self.events.horizontalHeader().setStretchLastSection(True)
         self.events.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.events.setMinimumHeight(145); right_layout.addWidget(self.events,1)
