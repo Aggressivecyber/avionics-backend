@@ -28,6 +28,10 @@ from .relations_page import RelationsPage
 from .theme import ACTIVE, ALERT_STYLE, INK, MUTED, NEGATIVE, RUNNING_STYLE, STYLE
 from .widgets import ThinSplitter
 from .ui_assets import ASSET_DIR, artwork, icon
+from .project import Project, remember_project, write_json
+from .jobs import start_analysis_process
+from .history_page import HistoryPage
+from .evidence import EvidenceDialog
 
 
 def label(text, name=None):
@@ -132,6 +136,26 @@ class MainWindow(QMainWindow):
             definition["path"] = str(bin_dir / (definition["library"] + suffix))
         self.data_dir = writable_data_path(str(data_dir))
         self.data_dir.mkdir(parents=True, exist_ok=True)
+        self.workspace_dir = self.data_dir
+        self.project = None
+        self.current_run = None
+        self.restore_sources = []
+        self.capture_after_ready = False
+        self.relation_process = QProcess(self)
+        self.relation_buffer = bytearray()
+        self.latest_complete = None
+        self.relation_process.readyReadStandardOutput.connect(self.read_complete_relations)
+        self.relation_process.finished.connect(self.relations_finished)
+        self.relation_process.errorOccurred.connect(lambda error: self.on_error("完整关系分析进程：" + self.relation_process.errorString()))
+        self.export_process = QProcess(self)
+        self.export_process.finished.connect(self.export_finished)
+        self.export_process.errorOccurred.connect(lambda error:self.on_error("导出进程："+self.export_process.errorString()))
+        self.raw_process = QProcess(self)
+        self.raw_process.finished.connect(self.raw_finished)
+        self.raw_process.errorOccurred.connect(lambda error:self.on_error("报文读取进程："+self.raw_process.errorString()))
+        self.offline_relation_process = QProcess(self)
+        self.offline_relation_process.finished.connect(self.offline_relations_finished)
+        self.offline_relation_process.errorOccurred.connect(lambda error:self.on_error("离线关系分析进程："+self.offline_relation_process.errorString()))
         self.client = BackendClient(bin_dir, self)
         self.client.ready.connect(self.on_ready)
         self.client.snapshot.connect(self.on_snapshot)
@@ -224,8 +248,9 @@ class MainWindow(QMainWindow):
         self.plugins_nav = button("插件中心", lambda: self.navigate(2), icon_name="plugins")
         self.relations_nav = button("数据关联", lambda: self.navigate(3), icon_name="relations")
         self.project_nav = button("项目设置", lambda: self.navigate(4), icon_name="settings")
+        self.history_nav = button("历史与报告", lambda:self.navigate(5), icon_name="archive")
         self.project_nav.setToolTip("设置项目名称和根目录，在表单中编辑解析字典、分析规则和时间处理配置。")
-        for nav in (self.plugins_nav, self.monitor_nav, self.relations_nav, self.offline_nav, self.project_nav):
+        for nav in (self.plugins_nav, self.monitor_nav, self.relations_nav, self.history_nav, self.offline_nav, self.project_nav):
             nav.setCheckable(True)
             nav.setIconSize(QSize(20, 20))
             navigation.addWidget(nav)
@@ -240,7 +265,7 @@ class MainWindow(QMainWindow):
         self.badge = label("等待中", "badge")
         self.badge.setToolTip("当前项目的实际状态；详细回执可在日志和离线分析中查看。")
         controls.addWidget(self.badge)
-        self.new_button = button("新建项目", self.new_session, icon_name="new_session")
+        self.new_button = button("新建项目", self.new_project, icon_name="new_session")
         self.new_button.setToolTip("使用项目设置中的名称和已保存配置创建新项目；已有归档保留。运行中的项目需先结束并封存。")
         self.capture_button = button("开始采集", self.start_capture, True, icon_name="capture_start")
         self.end_button = button("结束并封存", self.end_session, icon_name="capture_stop")
@@ -272,9 +297,14 @@ class MainWindow(QMainWindow):
         self.plugin_center.stop_requested.connect(self.stop_plugin)
         self.pages.addWidget(self.plugin_center)
         self.relations_page = RelationsPage(self.event_model, self.data_dir / "relations.json")
+        self.relations_page.definitions_changed.connect(self.relations_changed)
         self.pages.addWidget(self.relations_page)
         self.project_page = self.build_project_settings(configuration)
         self.pages.addWidget(self.project_page)
+        self.history_page = HistoryPage()
+        self.history_page.evidence_requested.connect(self.request_raw_record)
+        self.history_page.export_requested.connect(self.export_run)
+        self.pages.addWidget(self.history_page)
         sheet_layout.addWidget(self.pages, 1)
         self.message = label("就绪 · 先启用插件，再点击左下角“开始采集”。", "muted")
         self.message.setWordWrap(True)
@@ -307,6 +337,17 @@ class MainWindow(QMainWindow):
         basic_layout = QVBoxLayout(basics)
         basic_layout.setContentsMargins(0, 16, 0, 0)
         basic_layout.setSpacing(16)
+        project_actions = QHBoxLayout()
+        self.open_project_button = button("打开项目",self.browse_project,icon_name="folder")
+        self.open_project_button.setToolTip("打开 .aerobus.json 项目文档，恢复配置、关系、采集来源与历史记录；不会自动开始采集。")
+        self.save_project_button = button("保存项目",lambda:self.save_project(notify=True),icon_name="settings")
+        self.save_project_button.setToolTip("保存当前项目设置和页面布局；每次采集、关系与配置修改也会保存对应记录。")
+        self.recent_projects = QComboBox()
+        self.recent_projects.setToolTip("最近打开的项目；项目文档与内部资源使用相对路径，可整体复制项目根目录。")
+        self.recent_projects.activated.connect(self.open_recent_project)
+        for action in (self.open_project_button,self.save_project_button,self.recent_projects): project_actions.addWidget(action)
+        basic_layout.addLayout(project_actions)
+        self.update_recent_projects()
         settings, fields = card()
         fields.addWidget(label("项目与数据", "section"))
         name_label = label("项目名称")
@@ -574,7 +615,10 @@ class MainWindow(QMainWindow):
         self.plugins_nav.setChecked(index == 2)
         self.relations_nav.setChecked(index == 3)
         self.project_nav.setChecked(index == 4)
-        self.heading.setText(["总线监测工作台", "离线归档分析", "插件中心", "数据关联工作区", "项目设置"][index])
+        self.history_nav.setChecked(index == 5)
+        self.heading.setText(["总线监测工作台", "离线归档分析", "插件中心", "数据关联工作区", "项目设置", "历史与试验报告"][index])
+        if index == 5 and self.project:
+            self.history_page.set_project(self.project)
 
     def browse_configuration(self):
         path, _ = QFileDialog.getOpenFileName(self, "导入字典与规则", str(self.configuration_path), "配置 (*.ini)")
@@ -674,6 +718,10 @@ class MainWindow(QMainWindow):
             return False
         changed = directory != self.data_dir
         self.data_dir = directory
+        if changed and self.project is not None:
+            self.save_project()
+            self.project = None
+            self.current_run = None
         self.storage_label.setText(str(directory))
         self.storage_label.setToolTip("项目根目录；运行期间锁定。\n" + str(directory))
         self.relations_page.definitions_path = directory / "relations.json"
@@ -703,12 +751,21 @@ class MainWindow(QMainWindow):
     def open_data_directory(self):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))
 
+    def new_project(self):
+        if self.project:
+            self.save_project()
+        self.project = None
+        self.current_run = None
+        self.new_session()
+
     def new_session(self):
         if self.client.active:
             return
         if not self.apply_root_directory():
             return
         try:
+            if self.relation_process.state() != QProcess.ProcessState.NotRunning:
+                raise ValueError("请等待上一轮完整关系分析完成。")
             if self.config_editor.dirty:
                 raise ValueError("请先在项目设置中保存字典与规则。")
             configuration = self.configuration_path
@@ -718,13 +775,24 @@ class MainWindow(QMainWindow):
             if not name or re.search(r'[<>:"/\\|?*\x00-\x1f]', name) or name.endswith((".", " ")):
                 raise ValueError("项目名称为空或含有文件名不支持的字符。")
             self.data_dir.mkdir(parents=True, exist_ok=True)
-            self.archive = writable_data_path(str(self.data_dir / f"{name}_{datetime.now():%Y%m%d_%H%M%S}_{uuid4().hex[:6]}.avbus"))
+            if self.project is None:
+                self.project = Project.create(self.data_dir,name,configuration,self.relations_page.engine.document())
+                self.relations_page.definitions_path = self.project.resource(self.project.document["relations"])
+                remember_project(self.workspace_dir / "recent-projects.json",self.project.path)
+                self.update_recent_projects()
+            else:
+                self.project.set_configuration(configuration)
+                self.restore_sources = self.project.sources(self.bin_dir) if self.capture_after_ready else []
+            self.current_run = self.project.new_run()
+            configuration = self.project.resource(self.project.document["configuration"])
+            write_json(self.project.resource(self.current_run["archive"]).parent / "run.json",{**self.current_run,"steps":self.project.document["steps"]})
+            self.archive = self.project.resource(self.current_run["archive"])
             self.archive_root = self.data_dir
             self.parameter_model.clear()
             self.event_model.clear()
             self.samples.clear()
             self.source_configs.clear()
-            self.disabled_plugins.clear()
+            self.disabled_plugins = set(self.project.document["disabled_plugins"])
             self.latest_snapshot = {"sources": []}
             self.relations_page.reset_session()
             self.trend_selector.clear()
@@ -739,6 +807,7 @@ class MainWindow(QMainWindow):
                 value.setText("0")
             self.badge.setStyleSheet("")
             self.client.start(self.archive, configuration)
+            self.start_complete_relations()
             self.set_project_state("准备中", "正在创建项目及原始归档。")
             self.update_relative_paths()
             self.message.setText("正在创建：" + self.archive.name)
@@ -769,10 +838,16 @@ class MainWindow(QMainWindow):
                     if key not in self.disabled_plugins for source in sources)
         self.capture_button.setEnabled(ready and self.client.is_ready and not self.busy
                                        and not self.plugin_action_pending and not self.client.closing)
+        if self.project and not self.client.active and self.relation_process.state() == QProcess.ProcessState.NotRunning:
+            self.capture_button.setEnabled(bool(self.project.document["sources"]) and not self.config_editor.dirty)
         self.capture_button.setToolTip("启动本项目中已启用且就绪的采集源，开始接收数据并自动保存。" if ready else
             "启用所需插件或添加采集源后，才能开始采集。正在采集或已停用的来源不会重复启动。")
 
     def start_capture(self):
+        if not self.client.active:
+            self.capture_after_ready = True
+            self.new_session()
+            return
         self.plugin_action_pending = True
         for key, sources in self.plugin_center.sources_by_plugin.items():
             if key not in self.disabled_plugins:
@@ -870,6 +945,9 @@ class MainWindow(QMainWindow):
         self.refresh_plugins()
 
     def on_ready(self, message):
+        self.current_run["build"] = message["build"]
+        self.project.save()
+        write_json(self.archive.parent / "run.json",{**self.current_run,"steps":self.project.document["steps"]})
         self.set_project_state("等待中", "项目已就绪，启用插件后点击左下角“开始采集”。")
         self.log_message("项目已创建：" + message["archive"])
         self.log_message(f"后端版本 {message['build']['version']} · {message['build']['revision']}")
@@ -880,6 +958,12 @@ class MainWindow(QMainWindow):
         for source, plugin, config in self.pending_plugin_sources:
             self.client.send("add", source, plugin, config)
         self.pending_plugin_sources.clear()
+        queued = {item[2][0] for item in self.client.queue if item[1] == "add"}
+        if self.client.pending and self.client.pending[1] == "add": queued.add(self.client.pending[2][0])
+        for source,plugin,config in self.restore_sources:
+            if source not in queued:
+                self.client.send("add",source,plugin,config)
+        self.restore_sources.clear()
         self.on_busy(self.busy)
 
     def end_session(self):
@@ -920,11 +1004,16 @@ class MainWindow(QMainWindow):
             elif command == "remove":
                 del self.source_configs[arguments[0]]
             self.log_message(command + " " + (str(arguments[0]) if arguments else "") + " · 完成")
+            if command in {"add","replace","remove"} and self.project:
+                self.project.save_sources(self.source_configs,self.bin_dir,self.disabled_plugins)
         else:
             self.on_error(command + " 失败：" + payload)
 
     def on_snapshot(self, snapshot):
         self.latest_snapshot = snapshot
+        if self.capture_after_ready and not self.client.queue and self.source_configs:
+            self.capture_after_ready = False
+            QTimer.singleShot(0,self.start_capture)
         if not self.client.queue:
             self.plugin_action_pending = False
         now = time.monotonic()
@@ -1007,6 +1096,15 @@ class MainWindow(QMainWindow):
 
     def on_sealed(self, metadata):
         self.last_metadata = metadata
+        if self.current_run:
+            write_json(self.archive.parent / "capture-result.json",metadata)
+            self.current_run["status"] = ("已封存" if metadata["capture_status"] == "complete" and metadata["analysis_status"] == "complete" else "已降级") if metadata["recording_healthy"] else "异常"
+            self.current_run["capture_status"] = metadata["capture_status"]
+            self.current_run["analysis_status"] = metadata["analysis_status"]
+            self.current_run["sources"] = list(self.project.document["sources"])
+            self.save_project()
+            self.relation_process.write(b"finish\n")
+            self.relation_process.closeWriteChannel()
         healthy = metadata["recording_healthy"]
         complete = healthy and metadata["capture_status"] == "complete" and metadata["analysis_status"] == "complete"
         state = "已封存" if complete else "已降级" if healthy else "异常"
@@ -1045,11 +1143,13 @@ class MainWindow(QMainWindow):
     def on_active(self, active):
         if not active:
             self.plugin_action_pending = False
-        editable = not active and self.configuration_process.state() == QProcess.ProcessState.NotRunning
+        editable = not active and self.configuration_process.state() == QProcess.ProcessState.NotRunning and self.relation_process.state() == QProcess.ProcessState.NotRunning
         for widget in (self.storage_button, self.storage_label, self.project_name, self.config_editor):
             widget.setEnabled(editable)
         for widget in (self.new_button, self.config_button, self.preset_selector):
             widget.setEnabled(editable and not self.config_editor.dirty)
+        for widget in (self.open_project_button,self.recent_projects,self.save_project_button):
+            widget.setEnabled(editable and self.relation_process.state() == QProcess.ProcessState.NotRunning)
         self.save_configuration_button.setEnabled(editable and self.config_editor.dirty)
         self.reload_configuration_button.setEnabled(editable and self.config_editor.dirty)
         self.end_button.setEnabled(active and not self.client.closing)
@@ -1089,6 +1189,9 @@ class MainWindow(QMainWindow):
                 self.set_project_state("状态超时", f"后端 {age:.0f} 秒未刷新，保存状态待确认。", "alert")
 
     def set_project_state(self, state, detail, tone=None):
+        if self.project and self.current_run and self.client.active and self.current_run["status"] != state:
+            self.current_run["status"] = state
+            self.project.save()
         self.badge.setText(state)
         self.recording_status.setText(state)
         self.badge.setToolTip(detail)
@@ -1109,6 +1212,11 @@ class MainWindow(QMainWindow):
     def on_exit(self, code):
         if self.archive is not None and self.last_metadata is None:
             self.set_project_state("未封存", "采集已停止，但没有收到最终封存回执。", "alert")
+            if self.current_run:
+                self.current_run["status"] = "未封存"
+                self.save_project()
+                self.relation_process.write(b"finish\n")
+                self.relation_process.closeWriteChannel()
         if self.close_pending:
             self.close()
 
@@ -1117,6 +1225,9 @@ class MainWindow(QMainWindow):
         self.show_evidence(self.parameter_model.rows[source_index.row()])
 
     def show_evidence(self, evidence):
+        if self.archive is not None and self.last_metadata is not None and evidence.get("record_index"):
+            self.request_raw_record(evidence,self.archive)
+            return
         dialog = QDialog(self)
         dialog.setWindowTitle("数据与证据溯源")
         dialog.resize(780, 580)
@@ -1218,6 +1329,8 @@ class MainWindow(QMainWindow):
                 self.offline_event_model.append(read_jsonl_tail(self.analysis_output / "events.jsonl", 200))
                 self.offline_summary_label.setText(f"分析完成 · {summary['records']:,} 帧 / {summary['samples']:,} 样本 / {summary['results']:,} 事件")
             self.offline_summary = summary
+            if mode == "analyze":
+                self.start_offline_relations()
             self.offline_detail.setPlainText(json.dumps(summary, ensure_ascii=False, indent=2))
             self.offline_status.setText("校验通过，封存摘要与数据一致。" if mode == "inspect" else "完成 · 表格显示末尾数据，完整结果已写入输出目录。")
             if mode == "inspect":
@@ -1228,6 +1341,204 @@ class MainWindow(QMainWindow):
             self.offline_results.setCurrentIndex(0)
             self.offline_status.setText("失败：" + str(error))
             self.log_message("离线分析失败：" + str(error))
+
+    def update_recent_projects(self):
+        self.recent_projects.clear()
+        self.recent_projects.addItem("最近项目",None)
+        registry = self.workspace_dir / "recent-projects.json"
+        if registry.exists():
+            for path in json.loads(registry.read_text(encoding="utf-8")):
+                self.recent_projects.addItem(Path(path).stem,path)
+
+    def browse_project(self):
+        path,_ = QFileDialog.getOpenFileName(self,"打开AEROBUS项目",str(self.workspace_dir),"AEROBUS项目 (*.aerobus.json)")
+        if path:
+            self.open_project(path)
+
+    def open_recent_project(self,index):
+        path = self.recent_projects.itemData(index)
+        if path:
+            self.open_project(path)
+
+    def open_project(self,path):
+        try:
+            if self.client.active or self.relation_process.state() != QProcess.ProcessState.NotRunning:
+                raise ValueError("请先结束采集并等待完整分析保存。")
+            if self.config_editor.dirty:
+                raise ValueError("请先保存或放弃当前配置修改。")
+            project = Project.open(writable_data_path(str(path)))
+            if self.project:
+                self.save_project()
+            self.project = project
+            self.current_run = None
+            self.data_dir = project.root
+            self.storage_label.setText(str(project.root))
+            self.project_name.setText(project.document["name"])
+            self.load_configuration(project.resource(project.document["configuration"]))
+            self.relations_page.authoritative = False
+            self.relations_page.load_definitions(project.resource(project.document["relations"]))
+            self.source_configs = {row[0]:row for row in project.sources(self.bin_dir)}
+            self.disabled_plugins = set(project.document["disabled_plugins"])
+            self.latest_snapshot = {"sources":[]}
+            self.archive = self.archive_root = None
+            self.parameter_model.clear(); self.event_model.clear(); self.samples.clear()
+            self.sources.setRowCount(0); self.trend_selector.clear(); self.plot.select(None,[])
+            remember_project(self.workspace_dir / "recent-projects.json",project.path)
+            self.update_recent_projects()
+            layout = project.document["layout"]
+            for splitter,sizes in zip(self.findChildren(ThinSplitter),layout.get("splitters",[])):
+                splitter.setSizes(sizes)
+            self.history_page.set_project(project,select_latest=True)
+            self.navigate(layout.get("page",5))
+            self.set_project_state("等待中","项目已打开，点击开始采集会创建新一轮记录；已有记录保留。")
+            self.on_active(False)
+        except (OSError,ValueError,KeyError,ConfigurationError) as error:
+            self.on_error("项目打开失败："+str(error))
+
+    def save_project(self,notify=False):
+        if not self.project:
+            return
+        try:
+            self.project.document["name"] = self.project_name.text().strip()
+            self.project.document["layout"] = {"page":self.pages.currentIndex(),
+                "splitters":[s.sizes() for s in self.findChildren(ThinSplitter)]}
+            if not self.client.active and not self.config_editor.dirty:
+                self.project.set_configuration(self.configuration_path)
+            self.project.save_sources(self.source_configs,self.bin_dir,self.disabled_plugins)
+            if notify:
+                self.message.setText("项目已保存："+self.project.path.name)
+        except OSError as error:
+            self.on_error("项目保存失败："+str(error))
+
+    def relations_changed(self):
+        if self.project and self.current_run:
+            target = self.project.resource(self.current_run["relations"])
+            temporary = target.with_suffix(".json.tmp")
+            temporary.write_bytes(self.relations_page.definitions_path.read_bytes())
+            temporary.replace(target)
+            if not self.client.active and self.relation_process.state() == QProcess.ProcessState.NotRunning:
+                self.start_complete_relations(follow=False)
+
+    def start_complete_relations(self,follow=True):
+        self.relation_buffer.clear()
+        self.latest_complete = None
+        output = self.project.resource(self.current_run["analysis"])
+        if output.exists():
+            relative = str(Path(self.current_run["analysis"]).with_name("analysis-"+uuid4().hex[:8])).replace("\\","/")
+            self.current_run["analysis"] = relative
+            output = self.project.resource(relative)
+            self.project.save()
+        self.relations_page.authoritative = True
+        arguments = ["--input",str(self.archive)+".analysis","--relations",str(self.project.resource(self.current_run["relations"])),
+                     "--output",str(output),"--archive",str(self.archive)]
+        if follow:
+            arguments.append("--follow")
+        start_analysis_process(self.relation_process,arguments)
+
+    def read_complete_relations(self):
+        self.relation_buffer.extend(bytes(self.relation_process.readAllStandardOutput()))
+        latest = None
+        while b"\n" in self.relation_buffer:
+            line,_,remaining = self.relation_buffer.partition(b"\n")
+            self.relation_buffer = bytearray(remaining)
+            latest = json.loads(line)
+        if latest is not None:
+            self.latest_complete = latest
+            self.relations_page.apply_complete_state(latest)
+            self.relations_page.feedback.setText(f"完整参数计算：{latest['samples']:,}样本 / {latest['results']:,}结果 · " +
+                ("已完整保存" if latest["status"] == "complete" else "输入不完整" if latest["status"] == "partial" else "持续保存中"))
+
+    def relations_finished(self,code,status):
+        if code != 0 or status != QProcess.ExitStatus.NormalExit:
+            error = "完整关系分析失败："+bytes(self.relation_process.readAllStandardError()).decode("utf-8",errors="replace")
+            self.log_message(error)
+            if self.last_metadata is not None:
+                self.message.setText(error)
+            if self.current_run:
+                self.current_run["relation_status"] = "failed"
+                if self.last_metadata is not None:
+                    self.current_run["status"] = "已降级"
+                    self.set_project_state("已降级","原始记录已结束，完整关系计算失败；请查看日志。","alert")
+                write_json(self.archive.parent / "analysis-failure.json",{"error":error,"exit_code":code})
+                self.project.save()
+        else:
+            self.read_complete_relations()
+            self.current_run["relation_status"] = self.latest_complete["status"]
+            self.project.save()
+            self.history_page.set_project(self.project,select_latest=True)
+            self.log_message("完整关系结果、历史索引与报告已保存。")
+        self.on_active(self.client.active)
+        if self.close_pending:
+            self.close()
+
+    def start_offline_relations(self):
+        archive = Path(self.offline_archive.text()).resolve()
+        recorded = archive.parent / "relations.json"
+        definitions = recorded if recorded.exists() else self.relations_page.definitions_path
+        if not definitions.exists():
+            write_json(self.analysis_output / "relations.json",self.relations_page.engine.document())
+            definitions = self.analysis_output / "relations.json"
+        self.offline_relation_output = self.analysis_output / "workbench"
+        start_analysis_process(self.offline_relation_process,["--input",str(self.analysis_output),"--relations",str(definitions),
+            "--output",str(self.offline_relation_output),"--archive",str(archive)])
+        self.offline_status.setText("参数重算完成，正在计算完整自定义关系与历史索引…")
+
+    def offline_relations_finished(self,code,status):
+        if code != 0 or status != QProcess.ExitStatus.NormalExit:
+            self.on_error("离线关系复算失败："+bytes(self.offline_relation_process.readAllStandardError()).decode("utf-8",errors="replace"))
+            self.offline_status.setText("离线关系复算失败；请查看日志。")
+        else:
+            summary = json.loads((self.offline_relation_output / "summary.json").read_text(encoding="utf-8"))
+            self.offline_status.setText(f"完成 · 完整自定义关系 {summary['results']:,} 条；报告位于输出目录 workbench/。")
+        if self.close_pending:
+            self.close()
+
+    def export_run(self,directory):
+        if self.export_process.state() != QProcess.ProcessState.NotRunning:
+            self.on_error("上一份报告仍在导出。")
+            return
+        if self.relation_process.state() != QProcess.ProcessState.NotRunning:
+            self.on_error("完整分析尚在运行，请等待保存完成。")
+            return
+        summary = directory / "summary.json"
+        if not summary.exists() or json.loads(summary.read_text(encoding="utf-8"))["status"] == "running":
+            self.on_error("请先结束采集，等待完整分析完成后导出。")
+            return
+        self.export_directory = directory
+        self.history_page.status.setText("正在导出完整CSV与带证据的试验报告…")
+        start_analysis_process(self.export_process,["--output",str(directory),"--export"])
+
+    def export_finished(self,code,status):
+        if code != 0 or status != QProcess.ExitStatus.NormalExit:
+            self.on_error("报告导出失败："+bytes(self.export_process.readAllStandardError()).decode("utf-8",errors="replace"))
+        else:
+            self.history_page.status.setText("报告和完整CSV已导出："+str(self.export_directory))
+            QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.export_directory / "report.html")))
+        if self.close_pending:
+            self.close()
+
+    def request_raw_record(self,evidence,archive):
+        if self.raw_process.state() != QProcess.ProcessState.NotRunning:
+            self.on_error("正在读取上一条原始记录。")
+            return
+        self.raw_evidence = evidence
+        self.raw_archive = Path(archive)
+        self.message.setText("正在校验归档并读取原始记录 #"+str(evidence["record_index"])+"…")
+        self.raw_process.setProcessEnvironment(self.client.process.processEnvironment())
+        self.raw_process.start(str(self.bin_dir / ("bus_analyze.exe" if os.name == "nt" else "bus_analyze")),
+                               ["--record",str(archive),str(evidence["record_index"])])
+
+    def raw_finished(self,code,status):
+        if code != 0 or status != QProcess.ExitStatus.NormalExit:
+            self.on_error("原始记录读取失败："+bytes(self.raw_process.readAllStandardError()).decode("utf-8",errors="replace"))
+        else:
+            record = json.loads(bytes(self.raw_process.readAllStandardOutput()))
+            expected_identity = self.raw_evidence.get("recording_session_id")
+            if expected_identity is not None and record["recording_session_id"] != expected_identity:
+                self.on_error("原始归档与所选分析结果的会话身份不一致，请检查项目文件。")
+                return
+            self.evidence_dialog = EvidenceDialog(record,self.raw_evidence,self,Path(str(self.raw_archive)+".analysis/configuration.ini"))
+            self.evidence_dialog.show()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -1243,12 +1554,22 @@ class MainWindow(QMainWindow):
             self.close_pending = True
             event.ignore()
             return
-        if self.offline_mode:
+        if self.offline_mode or self.offline_relation_process.state() != QProcess.ProcessState.NotRunning:
             self.message.setText("离线分析正在运行；完成后可关闭窗口。")
             event.ignore()
         elif self.client.active:
             self.close_pending = True
             self.end_session()
             event.ignore()
+        elif self.relation_process.state() != QProcess.ProcessState.NotRunning or self.export_process.state() != QProcess.ProcessState.NotRunning:
+            self.close_pending = True
+            self.message.setText("正在保存完整分析与报告，完成后关闭。")
+            event.ignore()
+        elif self.history_page.query is not None and self.history_page.query.isRunning():
+            self.close_pending = True
+            self.history_page.query.finished.connect(self.close)
+            event.ignore()
         else:
+            if self.project:
+                self.save_project()
             event.accept()

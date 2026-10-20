@@ -88,8 +88,8 @@ class Expression:
 
 
 class Relation:
-    def __init__(self, name, formula, bindings, unit, window_ns):
-        self.id = uuid4().hex
+    def __init__(self, name, formula, bindings, unit, window_ns, identifier=None):
+        self.id = identifier or uuid4().hex
         self.name, self.formula, self.unit = name, formula, unit
         self.expression = Expression(formula, [b["alias"] for b in bindings])
         self.bindings = [b for b in bindings if b["alias"] in self.expression.names]
@@ -170,7 +170,7 @@ class RelationEngine:
         self.relations = []
         self.by_input = {}
 
-    def add(self, name, formula, bindings, unit, window_ns):
+    def add(self, name, formula, bindings, unit, window_ns, identifier=None):
         name = name.strip()
         if not name.strip() or len(name) > 64:
             raise ValueError("关系名称须为 1–64 个字符。")
@@ -182,7 +182,7 @@ class RelationEngine:
             raise ValueError("时间对齐窗口须为 0–60000 ms。")
         if len(self.relations) >= 32:
             raise ValueError("当前工作区最多保留 32 条关系。")
-        relation = Relation(name.strip(), formula, bindings, unit, window_ns)
+        relation = Relation(name.strip(), formula, bindings, unit, window_ns, identifier)
         self.relations.append(relation)
         for binding in relation.bindings:
             key = binding["source"], binding["parameter"]
@@ -207,3 +207,16 @@ class RelationEngine:
     def reset(self):
         for relation in self.relations:
             relation.reset()
+
+    def document(self):
+        return {"schema": 1, "relations": [{"id": r.id, "name": r.name, "formula": r.formula, "unit": r.unit,
+                "bindings": r.bindings, "window_ns": r.window_ns} for r in self.relations]}
+
+    @classmethod
+    def from_document(cls, document):
+        if document["schema"] != 1:
+            raise ValueError("不支持的关系配置版本。")
+        engine = cls()
+        for item in document["relations"]:
+            engine.add(item["name"], item["formula"], item["bindings"], item["unit"], item["window_ns"], item.get("id"))
+        return engine

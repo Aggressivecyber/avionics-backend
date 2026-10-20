@@ -13,7 +13,7 @@ import unittest
 from uuid import uuid4
 
 sys.dont_write_bytecode = True
-from PySide6.QtCore import QEvent, QPoint, QTimer, Qt
+from PySide6.QtCore import QEvent, QPoint, QProcess, QTimer, Qt
 from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QFontMetricsF, QHelpEvent, QPixmap
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QGridLayout, QLabel, QSplitter, QStyle, QStyleOptionSlider, QToolTip, QVBoxLayout, QWidget
@@ -52,7 +52,8 @@ def wait_until(predicate, timeout=10000):
         if qt_errors:
             raise AssertionError(qt_errors[-1])
         if time.monotonic() >= deadline:
-            raise AssertionError("timed out waiting for Qt/backend state")
+            details = "\n".join(w.message.text()+"\n"+w.log.toPlainText() for w in QApplication.topLevelWidgets() if isinstance(w,MainWindow))
+            raise AssertionError("timed out waiting for Qt/backend state\n"+details[-3000:])
         QTest.qWait(20)
     if qt_errors:
         raise AssertionError(qt_errors[-1])
@@ -79,6 +80,8 @@ class FrontendIntegration(unittest.TestCase):
             self.window.end_session()
         if self.window.client.active:
             wait_until(lambda: not self.window.client.active, 15000)
+        wait_until(lambda:self.window.relation_process.state() == QProcess.ProcessState.NotRunning,15000)
+        wait_until(lambda:self.window.offline_relation_process.state() == QProcess.ProcessState.NotRunning,15000)
         self.window.close()
         QTest.qWait(20)
 
@@ -279,7 +282,7 @@ class FrontendIntegration(unittest.TestCase):
         self.click_project_action(self.window.capture_button)
         wait_until(lambda: self.window.parameter_model.rowCount() == 4)
         self.window.close()
-        wait_until(lambda: not self.window.client.active)
+        wait_until(lambda: not self.window.client.active and not self.window.isVisible())
         self.assertIsNotNone(self.window.last_metadata)
         self.assertFalse(self.window.isVisible())
         failed_client = BackendClient(self.data_dir / "missing-bin", self.window)
@@ -466,7 +469,7 @@ class FrontendIntegration(unittest.TestCase):
         self.assertGreater(len(page.plot.points), 0)
         self.assertTrue(window.grab().save(str(args.output / "relations.png")))
         self.capture_layouts("active", (0, 3, 4))
-        self.assertTrue((self.data_dir / "relations.json").exists())
+        self.assertTrue(page.definitions_path.exists())
         # A separate plugin copy keeps collecting when the demo module is disabled.
         separate = self.data_dir / ("独立采集插件" + plugin_suffix)
         shutil.copyfile(args.bin_dir / ("bus_simulated" + plugin_suffix), separate)
@@ -530,6 +533,7 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(window.recording_status.text(), "已封存")
         self.assertEqual(window.archive_path.text(), window.archive.relative_to(window.data_dir).as_posix())
         reopened = MainWindow(args.bin_dir, self.data_dir, self.configuration)
+        reopened.open_project(window.project.path)
         self.assertEqual([r.name for r in reopened.relations_page.engine.relations], ["双路温差", "温差条件", "三路组合"])
         reopened.close()
         receipt["checks"].append({"name": self._testMethodName, "status": "passed",
@@ -703,7 +707,7 @@ class FrontendIntegration(unittest.TestCase):
         wait_until(lambda: window.client.is_ready and "recorded" in window.latest_snapshot)
         self.assertEqual(window.pages.currentIndex(), 4)
         self.assertTrue(window.archive.name.startswith("项目设置验收_"))
-        self.assertEqual(window.archive.parent, storage)
+        self.assertTrue(window.archive.is_relative_to(storage / "projects"))
         self.assertFalse(window.project_name.isEnabled())
         self.assertFalse(window.config_button.isEnabled())
         self.assertFalse(window.storage_button.isEnabled())
@@ -724,8 +728,9 @@ class FrontendIntegration(unittest.TestCase):
         self.click_project_action(window.end_button)
         wait_until(lambda: not window.client.active)
         self.assertEqual(window.badge.text(), "已封存")
+        wait_until(lambda:window.relation_process.state() == QProcess.ProcessState.NotRunning)
         self.assertTrue(window.new_button.isEnabled())
-        self.assertFalse(window.capture_button.isEnabled())
+        self.assertTrue(window.capture_button.isEnabled())
         self.assertFalse(window.end_button.isEnabled())
         self.capture_layouts("project-sealed", (4,))
         first_archive = window.archive
@@ -842,8 +847,8 @@ class FrontendIntegration(unittest.TestCase):
         self.assertGreater(temperature["value"], 40)
         self.assertEqual(window.recording_status.text(), "采集中")
         self.assertEqual(window.badge.text(), "采集中")
-        self.assertEqual(window.archive.parent, root)
-        self.assertEqual(window.archive_path.text(), window.archive.name)
+        self.assertTrue(window.archive.is_relative_to(root / "projects"))
+        self.assertEqual(window.archive_path.text(), window.archive.relative_to(root).as_posix())
         self.assertEqual(window.archive_path.toolTip(), str(window.archive))
         self.assertTrue(window.grab().save(str(args.output / "edited-configuration-live.png")))
         self.click_project_action(window.end_button)
@@ -853,6 +858,7 @@ class FrontendIntegration(unittest.TestCase):
         self.assertEqual(Path(str(window.archive) + ".analysis/configuration.ini").read_bytes(), saved.read_bytes())
         self.assertEqual(window.last_metadata["configuration_sha256"], digest(saved))
         first_archive = window.archive
+        wait_until(lambda:window.relation_process.state() == QProcess.ProcessState.NotRunning)
         next_root = (Path("D:/avionics-builds/editor-root-tests") / args.output.name if os.name == "nt"
                      else root / "下一根目录")
         window.navigate(4)
@@ -865,8 +871,8 @@ class FrontendIntegration(unittest.TestCase):
         window.project_name.setText("新根目录项目")
         self.click_project_action(window.new_button)
         wait_until(lambda: window.client.is_ready)
-        self.assertEqual(window.archive.parent, next_root)
-        self.assertEqual(window.archive_path.text(), window.archive.name)
+        self.assertTrue(window.archive.is_relative_to(next_root / "projects"))
+        self.assertEqual(window.archive_path.text(), window.archive.relative_to(next_root).as_posix())
         receipt["checks"].append({"name": self._testMethodName, "status": "passed",
             "form_editing_roundtrip": True, "add_remove_and_rename": True,
             "backend_rejects_invalid_field": True, "original_template_preserved": True,

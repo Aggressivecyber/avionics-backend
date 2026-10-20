@@ -63,16 +63,18 @@ class InputModel(ParameterModel):
 
 
 class RelationsPage(QWidget):
+    definitions_changed = Signal()
     def __init__(self, event_model, definitions_path, parent=None):
         super().__init__(parent)
         self.engine = RelationEngine()
+        self.authoritative = False
         self.definitions_path = definitions_path
         if definitions_path.exists():
             document = json.loads(definitions_path.read_text(encoding="utf-8"))
             if document["schema"] != 1:
                 raise ValueError("不支持的关系配置版本：" + str(definitions_path))
             for item in document["relations"]:
-                self.engine.add(item["name"], item["formula"], item["bindings"], item["unit"], item["window_ns"])
+                self.engine.add(item["name"], item["formula"], item["bindings"], item["unit"], item["window_ns"], item.get("id"))
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         self.tabs = QTabWidget()
@@ -269,7 +271,8 @@ class RelationsPage(QWidget):
     def feed(self, samples, omitted=0):
         self.input_model.update_samples(samples)
         self.input_note.setText(f"{self.input_model.rowCount()} 路已解码参数 · 双击追溯原始报文")
-        self.engine.feed(samples, omitted)
+        if not self.authoritative:
+            self.engine.feed(samples, omitted)
         self.refresh()
 
     def reset_session(self):
@@ -278,11 +281,29 @@ class RelationsPage(QWidget):
         self.refresh()
 
     def save_definitions(self, exclude=None):
-        document = {"schema": 1, "relations": [{"name": r.name, "formula": r.formula, "unit": r.unit,
-                     "bindings": r.bindings, "window_ns": r.window_ns} for r in self.engine.relations if r is not exclude]}
+        document = self.engine.document()
+        if exclude is not None:
+            document["relations"] = [r for r in document["relations"] if r["id"] != exclude.id]
         temporary = self.definitions_path.with_suffix(".json.tmp")
         temporary.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
         temporary.replace(self.definitions_path)
+        self.definitions_changed.emit()
+
+    def load_definitions(self, path):
+        self.definitions_path = path
+        self.engine = RelationEngine.from_document(json.loads(path.read_text(encoding="utf-8")))
+        self.reset_session()
+
+    def apply_complete_state(self, document):
+        states = {r["id"]: r for r in document["current"]}
+        for relation in self.engine.relations:
+            if relation.id in states:
+                state = states[relation.id]
+                for key in ("status", "value", "time_ns", "last_value", "last_time_ns", "origin_ns", "time_group", "evidence"):
+                    setattr(relation, key, state[key])
+                relation.history.clear()
+                relation.history.extend(tuple(p) for p in state["history"])
+        self.refresh()
 
     def refresh(self):
         selected = self.relationships.currentRow()

@@ -70,7 +70,7 @@ void writeStatus(std::ostream& out, const AdapterStatus& s) {
 void runControlConsole(BusManager& buses, const FramePipeline& pipeline, const ProcessingService& service,
     const MonitorSink& monitor, const SessionJournal& journal, const std::filesystem::path& archive,
     const BackendConfiguration& configuration) {
-    const auto utf8 = std::filesystem::absolute(archive).u8string();
+    const auto utf8 = absolutePath(archive).u8string();
     std::cout << "{\"schema\":1,\"type\":\"ready\",\"archive\":" << jsonString(std::string(utf8.begin(), utf8.end()))
         << ",\"configuration_sha256\":" << jsonString(hexIdentity(configuration.document->sha256)) << ",\"build\":";
     writeBuildInfo(std::cout); std::cout << "}\n" << std::flush;

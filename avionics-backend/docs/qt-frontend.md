@@ -1,4 +1,6 @@
-# Qt 地面试验工作台 · v0.5.0
+# Qt 地面试验工作台 · v0.6.0
+
+v0.6新增项目文档、多次采集、完整关系保存与复算、历史时间轴、比较、报文查看和试验报告。新功能和可独立运行的Release包使用方法见 [v0.6交付说明](release-v0.6.md)。
 
 新增“1553B软件验证插件”卡片，启用时加载 `mil1553b-demo.ini` 并准备来源；点击“开始采集”后产生合成监控输入。该插件沿用下述启停、记录和关联流程，软件范围见 [1553B说明](mil1553b-software.md)。
 
@@ -12,7 +14,7 @@
 .\scripts\start-frontend.ps1 -Python D:/anaconda/python.exe -BinDir D:/avionics-builds/ground-backend-v03-final/bin -RuntimeDir C:/msys64/mingw64/bin -DataDir E:/avionics-data/ground-station
 ```
 
-发布包包含 `Start-AEROBUS.cmd`、界面源码和后端运行库，默认复用上述 D 盘 Python / Qt。可传 `-Python D:/other-env/python.exe -DataDir E:/other-data`。Qt/Python 运行时没有打入本次便携包；依赖版本见 `frontend/requirements.txt`。
+Release包包含 `AEROBUS.exe`、独立关系计算程序、Python/Qt运行库、界面源码与后端，解压即可运行。上述脚本用于源码开发启动；依赖版本见 `frontend/requirements.txt` 和 `frontend/requirements-release.txt`。
 
 ## 操作流程
 
@@ -33,7 +35,7 @@
 
 输入必须质量有效、属于同一映射时基、考虑时钟不确定性后仍在用户指定的对齐窗口内，并符合参数字典的有效时间。质量失败、除零、显示数据缺口和来源重启会产生明确状态或曲线断点；孤立的有效点也会绘出标记，重启不会沿用旧代次的输入。
 
-关系定义自动保存到所选数据目录的 `relations.json`，重新打开窗口会加载名称、公式和变量映射。新会话清空实时曲线并等待新输入；曲线历史保留在当前窗口，后端原始归档与参数 JSONL 按会话保存。
+关系定义保存在项目内部的 `relations.json`，打开项目恢复名称、公式和变量映射。每次采集保留关系快照与定义摘要；独立进程读取完整参数文件生成完整关系JSONL和SQLite索引，页面保留最近512点。修改定义后从本次记录开头重算，历史定义版本保留。离线调用相同公式引擎；显示缓冲省略不影响完整关系计算。
 
 ## 插件说明
 

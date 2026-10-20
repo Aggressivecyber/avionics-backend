@@ -112,7 +112,7 @@ int main(int argc, char** argv) {
             capture.command_timeout = std::chrono::milliseconds(configuration->capture_command_timeout_ms);
             capture.stop_timeout = std::chrono::milliseconds(configuration->capture_stop_timeout_ms);
         }
-        if (!control) std::cout << "archive=" << std::filesystem::absolute(archive).string() << '\n';
+        if (!control) std::cout << "archive=" << absolutePath(archive).string() << '\n';
         {
             BusManager buses(pipeline, journal, capture);
             if (control) runControlConsole(buses, *pipeline, *service, *monitor, *journal, archive, *configuration);

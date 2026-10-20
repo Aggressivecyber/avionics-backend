@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QWidget
 
 from .theme import ACCENT, BORDER, MUTED, POSITIVE, SURFACE, WARNING
 from .ui_assets import artwork
+from .outcomes import NORMAL_OUTCOMES, OUTCOME_LABELS
 
 
 def display_value(value):
@@ -111,10 +112,10 @@ class EventModel(QAbstractTableModel):
         if role == Qt.ItemDataRole.TextAlignmentRole:
             return (Qt.AlignmentFlag.AlignRight if index.column() >= 2 else Qt.AlignmentFlag.AlignLeft) | Qt.AlignmentFlag.AlignVCenter
         if role == Qt.ItemDataRole.DisplayRole:
-            return [row["rule"], row["outcome"], f"{row['time_ns'] / 1e9:.6f}",
+            return [row["rule"], OUTCOME_LABELS[row["outcome"]], f"{row['time_ns'] / 1e9:.6f}",
                     display_value(row["metric"]), str(len(row["evidence"]))][index.column()]
         if role == Qt.ItemDataRole.ForegroundRole and index.column() == 1:
-            return QColor(POSITIVE if row["outcome"] in {"consistent", "response_ok"} else WARNING)
+            return QColor(POSITIVE if row["outcome"] in NORMAL_OUTCOMES else WARNING)
         if role == Qt.ItemDataRole.ToolTipRole:
             return json.dumps(row, ensure_ascii=False, indent=2)
         return None

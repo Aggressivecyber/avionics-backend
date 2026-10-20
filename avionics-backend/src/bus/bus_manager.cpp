@@ -1,3 +1,4 @@
+#include "core/path.hpp"
 #include "core/bus_manager.hpp"
 #include <cctype>
 #include <stdexcept>
@@ -35,7 +36,7 @@ void BusManager::add(const std::string& id, const std::filesystem::path& plugin,
     std::lock_guard lock(mutex_);
     if (!entries_.emplace(id, entry).second) throw std::invalid_argument("duplicate instance id: " + id);
     if (journal_) {
-        const auto utf8 = std::filesystem::absolute(plugin).u8string();
+        const auto utf8 = absolutePath(plugin).u8string();
         journal_->write(id, "configured", entry->adapter->status(), std::string(utf8.begin(), utf8.end()), config);
     }
 }
@@ -74,7 +75,7 @@ void BusManager::replace(const std::string& id, const std::filesystem::path& plu
     auto candidate = std::make_unique<CaptureAdapter>(capture_options_, plugin, id, pipeline_, journal_);
     candidate->configure(config);
     if (journal_) {
-        const auto utf8 = std::filesystem::absolute(plugin).u8string();
+        const auto utf8 = absolutePath(plugin).u8string();
         journal_->write(id, "replacement_prepared", candidate->status(), std::string(utf8.begin(), utf8.end()), config);
     }
     std::lock_guard lock(entry->mutex);

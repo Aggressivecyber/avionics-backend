@@ -1,3 +1,4 @@
+#include "core/path.hpp"
 #include "core/worker_process.hpp"
 #include <atomic>
 #include <mutex>
@@ -81,7 +82,7 @@ WorkerProcess::WorkerProcess(const std::filesystem::path& executable) : state_(s
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
     startup.StartupInfo.hStdInput = input.value; startup.StartupInfo.hStdOutput = output.value; startup.StartupInfo.hStdError = errors.value;
     PROCESS_INFORMATION created{};
-    auto command = L"\"" + std::filesystem::absolute(executable).wstring() + L"\"";
+    auto command = L"\"" + absolutePath(executable).wstring() + L"\"";
     checked(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
         CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr, &startup.StartupInfo, &created), "launch capture worker");
     state_->process.value = created.hProcess; Handle thread; thread.value = created.hThread;

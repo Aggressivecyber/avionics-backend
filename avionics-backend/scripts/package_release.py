@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 
 
 def main():
@@ -14,6 +15,7 @@ def main():
     parser.add_argument("--output", required=True)
     parser.add_argument("--verification", type=Path)
     parser.add_argument("--mingw-bin", default=r"C:\msys64\mingw64\bin")
+    parser.add_argument("--freeze-python",type=Path,required=True)
     args = parser.parse_args()
     if os.name != "nt":
         raise RuntimeError("This portable package recipe is for the verified Windows/MinGW build")
@@ -52,18 +54,18 @@ def main():
     shutil.copy2(root / "scripts" / "start-frontend.ps1", output / "scripts" / "start-frontend.ps1")
     if args.verification:
         shutil.copytree(args.verification, output / "verification")
-    (output / "Start-AEROBUS.cmd").write_text(
-        '@echo off\npowershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\\start-frontend.ps1" '
-        '-BinDir "%~dp0bin" %*\n', encoding="ascii")
+    runtime = json.loads(subprocess.run([sys.executable,"-B",str(root/"scripts/freeze_desktop.py"),
+        "--python",str(args.freeze_python),"--output",str(output)],env=env,capture_output=True,text=True,
+        check=True,creationflags=flags).stdout)
     subprocess.run(["git", "archive", "--format=zip", "--output=" + str(output / "source.zip"), revision],
                    cwd=root, check=True, creationflags=flags)
     files = {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(output.rglob("*")) if path.is_file()}
     manifest = {"build": version, "platform": "windows-x64-mingw", "acceptance_scope": "software-architecture-and-synthetic-1553b-monitor",
                 "desktop": {"version": version["version"], "toolkit": "Qt Widgets", "binding": "PySide6", "tested_version": "6.9.2",
-                            "python_qt_runtime": "external", "launcher": "Start-AEROBUS.cmd",
+                            "python_qt_runtime": "bundled", "runtime":runtime,"launcher": "AEROBUS.exe",
                             "control_schema": 1, "plugin_catalog": "frontend/ground_station/plugins.json",
-                            "relation_configuration_schema": 1},
+                            "relation_configuration_schema": 1,"project_schema":1},
                 "hardware_acceptance": "pending-selected-bus-sdk-and-workload", "files": files}
     (output / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     files["manifest.json"] = hashlib.sha256((output / "manifest.json").read_bytes()).hexdigest()

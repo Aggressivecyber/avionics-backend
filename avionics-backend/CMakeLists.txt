@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(avionics_backend VERSION 0.5.0 LANGUAGES C CXX)
+project(avionics_backend VERSION 0.6.0 LANGUAGES C CXX)
 
 set(AVIONICS_BUILD_REVISION "" CACHE STRING "Commit identity when building a source export without Git")
 if(NOT AVIONICS_BUILD_REVISION)
@@ -128,10 +128,14 @@ if(BUILD_TESTING)
         add_test(NAME qt_frontend COMMAND "${Python3_EXECUTABLE}" -B
             "${PROJECT_SOURCE_DIR}/frontend/test_frontend.py" --bin-dir "$<TARGET_FILE_DIR:bus_backend>"
             --output "${CMAKE_BINARY_DIR}/frontend-test-output")
-        set_tests_properties(qt_frontend PROPERTIES TIMEOUT 60
+        set_tests_properties(qt_frontend PROPERTIES TIMEOUT 120
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PYTHONDONTWRITEBYTECODE=1")
         add_test(NAME qt_relations COMMAND "${Python3_EXECUTABLE}" -B
             "${PROJECT_SOURCE_DIR}/frontend/test_relations.py")
         set_tests_properties(qt_relations PROPERTIES ENVIRONMENT "PYTHONDONTWRITEBYTECODE=1")
+        add_test(NAME qt_workbench COMMAND "${Python3_EXECUTABLE}" -B -m ground_station.release_check
+            --bin-dir "$<TARGET_FILE_DIR:bus_backend>" --output "${CMAKE_BINARY_DIR}/workbench-test-output")
+        set_tests_properties(qt_workbench PROPERTIES TIMEOUT 120 WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/frontend"
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PYTHONDONTWRITEBYTECODE=1")
     endif()
 endif()

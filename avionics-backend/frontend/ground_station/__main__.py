@@ -10,8 +10,10 @@ sys.dont_write_bytecode = True
 def main():
     root = Path(__file__).resolve().parents[2]
     parser = argparse.ArgumentParser(description="AEROBUS Qt ground-test desktop")
-    parser.add_argument("--bin-dir", type=Path, required=True)
-    parser.add_argument("--data-dir", type=Path, default=root / "runs" / "desktop")
+    parser.add_argument("--bin-dir", type=Path, default=root / "bin")
+    default_data = (Path("E:/AEROBUS-data") if Path("E:/").is_dir() else Path("D:/AEROBUS-data")) if getattr(sys,"frozen",False) else root / "runs" / "desktop"
+    parser.add_argument("--data-dir", type=Path, default=default_data)
+    parser.add_argument("--project",type=Path)
     parser.add_argument("--config", type=Path, default=root / "config" / "correlation-demo.ini")
     args = parser.parse_args()
     from .backend import writable_data_path
@@ -28,6 +30,8 @@ def main():
     app.setStyle("Fusion")
     window = MainWindow(args.bin_dir.resolve(), data_dir, args.config.resolve())
     window.show()
+    if args.project:
+        window.open_project(args.project)
     return app.exec()
 
 

@@ -1,3 +1,4 @@
+#include "core/path.hpp"
 #include "core/capture_adapter.hpp"
 
 namespace avionics {
@@ -8,7 +9,7 @@ CaptureAdapter::CaptureAdapter(const CaptureOptions& options, const std::filesys
     try {
         std::vector<std::uint8_t> arguments;
         wire::put(arguments, wire::protocol_version);
-        const auto utf8 = std::filesystem::absolute(plugin).u8string(); wire::text(arguments, std::string(utf8.begin(), utf8.end()));
+        const auto utf8 = absolutePath(plugin).u8string(); wire::text(arguments, std::string(utf8.begin(), utf8.end()));
         execute(wire::Kind::Load, std::move(arguments), options_.command_timeout);
     } catch (...) {
         { std::lock_guard lock(mutex_); closing_ = true; }

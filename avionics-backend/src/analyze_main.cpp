@@ -34,10 +34,63 @@ int main(int argc, char** argv) {
             while (reader.next(frame)) {}
             writeArchiveSummary(std::cout, reader.summary()); std::cout << '\n'; return 0;
         }
+        if (argc == 4 && std::string(argv[1]) == "--record") {
+            std::size_t consumed{};
+            const auto index = std::stoull(argv[3], &consumed);
+            if (!index || consumed != std::string(argv[3]).size()) throw std::invalid_argument("record index must be a positive integer");
+            ArchiveReader reader(pathFromUtf8(argv[2])); RawFrame frame;
+            std::optional<RawFrame> selected;
+            while (reader.next(frame)) if (frame.record_index == index) selected = frame;
+            if (!selected) throw std::invalid_argument("record index not present in archive");
+            const auto& f = *selected;
+            std::string payload; payload.reserve(f.payload.size() * 2);
+            constexpr char digits[] = "0123456789abcdef";
+            for (const auto captured_byte : f.payload) { payload += digits[captured_byte >> 4]; payload += digits[captured_byte & 15]; }
+            std::cout << "{\"schema\":1,\"record_index\":" << f.record_index << ",\"source\":" << jsonString(f.source)
+                << ",\"protocol\":" << f.protocol << ",\"channel\":" << f.channel << ",\"generation\":" << f.generation
+                << ",\"capture_time_ns\":" << f.capture_time_ns << ",\"ingest_time_ns\":" << f.ingest_time_ns
+                << ",\"sequence\":" << f.sequence << ",\"flags\":" << f.flags << ",\"clock_domain\":" << f.clock_domain
+                << ",\"origin_source\":" << jsonString(f.origin_source) << ",\"origin_generation\":" << f.origin_generation
+                << ",\"origin_record_index\":" << f.origin_record_index << ",\"payload_hex\":" << jsonString(payload)
+                << ",\"recording_session_id\":" << (f.recording_session_id ? jsonString(hexIdentity(*f.recording_session_id)) : "null")
+                << ",\"origin_session_id\":" << (f.origin_session_id ? jsonString(hexIdentity(*f.origin_session_id)) : "null");
+            std::cout << ",\"protocol_messages\":[";
+            ProtocolParseResult parsing;
+            if (f.protocol == BUS_PROTOCOL_MIL1553B) {
+                Mil1553BHandler handler(protocolStreamOf(f)); parsing = handler.parse(f);
+            }
+            bool first_message = true;
+            for (const auto& message : parsing.messages) {
+                if (!first_message) std::cout << ',';
+                first_message = false;
+                std::cout << "{\"kind\":" << jsonString(message.message_kind) << ",\"metadata\":{";
+                bool first_field = true;
+                for (const auto& field : message.metadata) {
+                    if (!first_field) std::cout << ',';
+                    first_field = false;
+                    std::cout << jsonString(field.name) << ':';
+                    std::visit([](const auto& value) {
+                        using T = std::decay_t<decltype(value)>;
+                        if constexpr (std::is_same_v<T, std::string>) std::cout << jsonString(value);
+                        else if constexpr (std::is_same_v<T, bool>) std::cout << (value ? "true" : "false");
+                        else std::cout << value;
+                    }, field.value);
+                }
+                std::cout << "}}";
+            }
+            std::cout << "],\"diagnostics\":[";
+            for (std::size_t i = 0; i < parsing.diagnostics.size(); ++i) {
+                if (i) std::cout << ',';
+                std::cout << jsonString(parsing.diagnostics[i]);
+            }
+            std::cout << "]}\n";
+            return 0;
+        }
         if (argc != 5 || std::string(argv[1]) != "--analyze") {
             std::cout << "Usage: bus_analyze --fixture NEW_ARCHIVE\n"
                 << "       bus_analyze --validate-config CONFIG_INI\n"
                 << "       bus_analyze --inspect INPUT_ARCHIVE\n"
+                << "       bus_analyze --record INPUT_ARCHIVE RECORD_INDEX\n"
                 << "       bus_analyze --analyze CONFIG_INI INPUT_ARCHIVE NEW_OUTPUT_DIRECTORY\n";
             return argc == 1 ? 0 : 2;
         }
@@ -50,7 +103,7 @@ int main(int argc, char** argv) {
         config.document->save(output / "configuration.ini");
         {
             std::ofstream provenance(output / "input_archive.txt", std::ios::binary);
-            const auto utf8 = std::filesystem::absolute(input_path).u8string();
+            const auto utf8 = absolutePath(input_path).u8string();
             provenance << std::string(utf8.begin(), utf8.end()) << '\n';
             if (!provenance) throw std::runtime_error("cannot write input provenance");
         }
