@@ -1,5 +1,6 @@
 """Repeatable acceptance through the real Qt event loop and packaged executables."""
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -52,6 +53,7 @@ def main(arguments=None):
             if errors: raise AssertionError(errors[-1])
             if time.monotonic() > deadline: raise AssertionError("Qt验收等待超时")
             QTest.qWait(20)
+            time.sleep(.005)  # QTest.qWait alone can starve Python QThread work.
         if errors: raise AssertionError(errors[-1])
 
     def digest(path):
@@ -104,7 +106,7 @@ def main(arguments=None):
         summary = json.loads(read_shared(analysis/"summary.json"))
         assert summary["status"]=="complete" and summary["samples"]==window.last_metadata["samples"]
         assert summary["results"]>512 and summary["results_sha256"]==digest(analysis/summary["result_file"])
-        with sqlite3.connect(analysis/"history.sqlite") as db:
+        with closing(sqlite3.connect(analysis/"history.sqlite")) as db:
             assert db.execute("SELECT count(*) FROM samples").fetchone()[0]==summary["samples"]
             assert db.execute("SELECT count(*) FROM relations").fetchone()[0]==summary["results"]
             assert db.execute("SELECT count(*) FROM relations WHERE usable=0").fetchone()[0]>0

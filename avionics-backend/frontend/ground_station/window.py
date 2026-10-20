@@ -390,7 +390,7 @@ class MainWindow(QMainWindow):
         storage_row.addWidget(self.storage_button)
         storage_row.addWidget(self.open_storage_button)
         fields.addLayout(storage_row)
-        self.relative_paths = label("归档：./项目名称_日期_时间_编号.avbus\n配置：config/\n分析：./归档文件名.avbus.analysis/", "muted")
+        self.relative_paths = label("项目：./项目名称_编号.aerobus.json\n配置与关系：projects/项目ID/\n采集与分析：projects/项目ID/records/采集编号/", "muted")
         self.relative_paths.setWordWrap(True)
         self.relative_paths.setToolTip("这些是相对于项目根目录的路径；底部在新建项目后显示实际归档的相对路径。")
         fields.addWidget(self.relative_paths)

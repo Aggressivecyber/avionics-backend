@@ -1,6 +1,7 @@
 """Indexed history, linked time cursors, comparisons and trial notes."""
 import json
 import math
+from contextlib import closing
 from pathlib import Path
 import sqlite3
 
@@ -29,7 +30,7 @@ class HistoryQuery(QThread):
     def run(self):
         primary, comparison, selections, group, start, end, page, anomalies = self.arguments
         try:
-            with sqlite3.connect(primary[0].as_uri()+"?mode=ro", uri=True) as db:
+            with closing(sqlite3.connect(primary[0].as_uri()+"?mode=ro", uri=True)) as db:
                 catalog = [(s, p, g, json.loads(text)["unit"]) for s, p, g, text in db.execute(
                     "SELECT source,parameter,grp,payload FROM samples GROUP BY source,parameter,grp ORDER BY source,parameter")]
                 groups = sorted({r[2] for r in catalog if r[2]})
@@ -50,7 +51,7 @@ class HistoryQuery(QThread):
                 kind, source, parameter, selected_group, unit = selection
                 series = []
                 for entry in [primary] + ([comparison] if comparison else []):
-                    with sqlite3.connect(entry[0].as_uri()+"?mode=ro", uri=True) as db:
+                    with closing(sqlite3.connect(entry[0].as_uri()+"?mode=ro", uri=True)) as db:
                         origin = db.execute("SELECT min(t) FROM samples WHERE grp=?", (group,)).fetchone()[0]
                         if origin is None:
                             continue

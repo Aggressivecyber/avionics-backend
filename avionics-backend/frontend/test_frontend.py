@@ -55,6 +55,7 @@ def wait_until(predicate, timeout=10000):
             details = "\n".join(w.message.text()+"\n"+w.log.toPlainText() for w in QApplication.topLevelWidgets() if isinstance(w,MainWindow))
             raise AssertionError("timed out waiting for Qt/backend state\n"+details[-3000:])
         QTest.qWait(20)
+        time.sleep(.005)  # Let Python QThread workers acquire the GIL during Qt test waits.
     if qt_errors:
         raise AssertionError(qt_errors[-1])
 

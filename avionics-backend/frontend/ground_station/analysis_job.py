@@ -1,6 +1,7 @@
 """Complete-file relation processing and a disk-backed history index, outside Qt."""
 import argparse
 import csv
+from contextlib import closing
 import hashlib
 import html
 import json
@@ -68,7 +69,7 @@ def export_report(directory, metadata, export_csv=False):
     with (directory / "history.sqlite").open("rb") as stream:
         if hashlib.file_digest(stream,"sha256").hexdigest() != metadata["index_sha256"]:
             raise ValueError("历史索引摘要不匹配，请从原始归档重新分析。")
-    with sqlite3.connect(directory / "history.sqlite") as db:
+    with closing(sqlite3.connect(directory / "history.sqlite")) as db:
         outcomes = list(db.execute("SELECT outcome,count(*) FROM events GROUP BY outcome"))
         relations = list(db.execute("SELECT id,count(*),sum(usable),sum(usable=1 AND value=0) FROM relations GROUP BY id"))
         definitions = json.loads((directory / metadata["definition"]).read_text(encoding="utf-8"))
