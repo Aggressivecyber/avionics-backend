@@ -165,6 +165,8 @@ class HistoryPage(QWidget):
         self.event_page = 0
         self.selected_evidence = None
         self.catalog_loaded = False
+        self.query_pending = False
+        self.context_generation = 0
         layout = QVBoxLayout(self); layout.setContentsMargins(0,0,0,0)
         toolbar = QHBoxLayout()
         self.runs = QComboBox(); self.compare = QComboBox(); self.group = QComboBox()
@@ -184,7 +186,7 @@ class HistoryPage(QWidget):
         for spin in (self.start,self.end): spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons); spin.setMaximumWidth(180)
         self.start.setToolTip("所选时基首个样本之后的秒数；只筛选显示范围，完整数据保留。")
         self.end.setToolTip("结束相对时间，须大于开始时间；“全时段”恢复完整范围。")
-        self.apply_button = QPushButton("应用范围"); self.apply_button.clicked.connect(self.load_query)
+        self.apply_button = QPushButton("应用范围"); self.apply_button.clicked.connect(lambda:self.zoom(self.start.value(),self.end.value()))
         self.full_button = QPushButton("全时段"); self.full_button.clicked.connect(self.full_range)
         self.raw_button = QPushButton("查看选中点报文"); self.raw_button.setEnabled(False); self.raw_button.clicked.connect(self.show_selected)
         for w in (QLabel("相对时间"),self.start,self.end,self.apply_button,self.full_button,self.raw_button): ranges.addWidget(w)
@@ -249,6 +251,8 @@ class HistoryPage(QWidget):
         return self.project.resource(run["analysis"]) / "history.sqlite", self.project.resource(run["archive"]), run["label"]
 
     def reload(self):
+        self.context_generation += 1
+        self.group.blockSignals(True); self.group.clear(); self.group.blockSignals(False)
         self.catalog_loaded = False; self.event_page = 0
         self.parameters.blockSignals(True); self.parameters.clear(); self.parameters.blockSignals(False)
         self.start.setValue(0); self.end.setValue(0)
@@ -259,6 +263,8 @@ class HistoryPage(QWidget):
         self.load_query()
 
     def group_changed(self):
+        self.context_generation += 1
+        self.event_page = 0
         self.catalog_loaded = False
         self.start.setValue(0); self.end.setValue(0)
         self.load_query()
@@ -267,6 +273,7 @@ class HistoryPage(QWidget):
         self.event_page = 0; self.start.setValue(0); self.end.setValue(0); self.load_query()
 
     def zoom(self,start,end):
+        self.event_page = 0
         self.start.setValue(start); self.end.setValue(end); self.load_query()
 
     def change_page(self,delta):
@@ -277,6 +284,10 @@ class HistoryPage(QWidget):
         if not run or not self.project:
             return
         if self.query is not None and self.query.isRunning():
+            self.query_pending = True
+            return
+        if self.end.value() <= self.start.value() and (self.start.value() > 0 or self.end.value() > 0):
+            self.status.setText("结束时间须大于开始时间。")
             return
         entry = self.entry(run)
         if not entry[0].exists():
@@ -290,8 +301,16 @@ class HistoryPage(QWidget):
         comparison = self.compare.currentData()
         self.query = HistoryQuery(entry,self.entry(comparison) if comparison else None,selected,self.group.currentText(),
                                   self.start.value(),self.end.value(),self.event_page,self.anomalies.isChecked(),self)
-        self.query.result.connect(self.show_result); self.query.failed.connect(self.status.setText)
+        generation = self.context_generation
+        self.query.result.connect(lambda result:self.show_result(result) if generation == self.context_generation else None)
+        self.query.failed.connect(self.status.setText)
+        self.query.finished.connect(self.query_finished)
         self.query.start(); self.status.setText("正在查询完整历史…")
+
+    def query_finished(self):
+        if self.query_pending:
+            self.query_pending = False
+            self.load_query()
 
     def show_result(self,result):
         self.group.blockSignals(True)

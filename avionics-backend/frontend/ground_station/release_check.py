@@ -111,16 +111,17 @@ def main(arguments=None):
         receipt["checks"].append({"name":"complete_relations_despite_display_omission","samples":summary["samples"],"results":summary["results"],"display_omitted":window.display_omitted})
         window.navigate(5); history = window.history_page
         wait(lambda:history.catalog_loaded and not history.query.isRunning())
-        history.parameters.blockSignals(True)
         for i in range(min(2,history.parameters.count())): history.parameters.item(i).setCheckState(Qt.CheckState.Checked)
-        history.parameters.blockSignals(False); history.load_query()
-        wait(lambda:not history.query.isRunning())
+        wait(lambda:not history.query.isRunning() and not history.query_pending and len(history.plot.lanes)==2)
         assert len(history.plot.lanes)==2
         full_count = sum(s["count"] for lane in history.plot.lanes for s in lane["series"])
         half = history.end.value()/2
         history.end.setValue(half); history.load_query(); wait(lambda:not history.query.isRunning())
         assert history.plot.end <= half+.000001
         assert sum(s["count"] for lane in history.plot.lanes for s in lane["series"]) < full_count
+        history.start.setValue(history.end.value()+1)
+        history.load_query()
+        assert "结束时间须大于开始时间" in history.status.text()
         history.full_range(); wait(lambda:not history.query.isRunning())
         QTest.mouseClick(history.plot,Qt.MouseButton.LeftButton,pos=QPoint(history.plot.width()//2,history.plot.height()//4))
         assert history.raw_button.isEnabled() and history.selected_evidence[0]["record_index"]>0
