@@ -120,6 +120,8 @@ def main(arguments=None):
             signatures[kind] = result["data_signature"]
             receipt["checks"].append({"name":kind, "passed":True, "checks":len(result["checks"]), "data_signature":result["data_signature"]})
             if kind == "limit":
+                limit_case = (dict(spec), window.archive, directory,
+                              json.loads((directory/"summary.json").read_text(encoding="utf-8")))
                 window.navigate(2); QTest.mouseClick(window.plugin_center.cards["scenario"].acceptance_button, Qt.MouseButton.LeftButton)
                 dialog = window.scenario_result_dialog
                 assert dialog.isVisible()
@@ -142,24 +144,38 @@ def main(arguments=None):
         directory = window.project.resource(window.current_run["analysis"])
         metadata = json.loads((directory/"summary.json").read_text(encoding="utf-8"))
         # Each mutation must be caught; outputs from the successful runs stay intact.
-        for mutation in ("value", "missing", "event_time", "formula"):
+        for mutation in ("value", "missing", "event_time", "formula", "relation_parameter",
+                         "trigger_configuration", "trigger_generation", "partial_event_evidence"):
+            case_spec, case_archive, case_directory, case_metadata = (
+                limit_case if mutation == "partial_event_evidence" else (spec, archive, directory, metadata))
             case = output/("negative-"+mutation); case.mkdir()
-            source = case/"input"; shutil.copytree(Path(str(archive)+".analysis"),source)
+            source = case/"input"; shutil.copytree(Path(str(case_archive)+".analysis"),source)
             analysis = case/"analysis"; analysis.mkdir()
-            for name in (metadata["definition"],metadata["result_file"]): shutil.copy2(directory/name,analysis/name)
+            for name in (case_metadata["definition"],case_metadata["result_file"]): shutil.copy2(case_directory/name,analysis/name)
             if mutation in ("value","missing"):
                 path = source/"parameters.jsonl"; rows = [json.loads(line) for line in path.read_text().splitlines()]
                 if mutation == "value": rows[0]["value"] = 987
                 else: rows.pop()
-            elif mutation == "event_time":
+            elif mutation in ("event_time", "partial_event_evidence"):
                 path = source/"events.jsonl"; rows = [json.loads(line) for line in path.read_text().splitlines()]
-                rows[0]["time_ns"] += 1
+                if mutation == "event_time": rows[0]["time_ns"] += 1
+                else:
+                    assert len(rows) > 1
+                    rows[0]["evidence"] = []
             else:
-                path = analysis/metadata["result_file"]; rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-                rows[0]["value"] = 999
+                path = analysis/case_metadata["result_file"]; rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+                if mutation == "formula": rows[0]["value"] = 999
+                elif mutation == "trigger_configuration": rows[0]["trigger"]["configuration_sha256"] = "other-configuration"
+                elif mutation == "trigger_generation": rows[0]["trigger"]["generation"] += 1
+                else:
+                    inputs = [json.loads(line) for line in (source/"parameters.jsonl").read_text().splitlines()]
+                    position = next(row for row in inputs if row["parameter"] == "position" and row["record_index"] == rows[0]["trigger"]["record_index"])
+                    rows[0]["evidence"] = [{key:position[key] for key in rows[0]["evidence"][0]}]
             path.write_text("".join(json.dumps(row,ensure_ascii=False)+"\n" for row in rows),encoding="utf-8")
-            result = verify_scenario(spec,source,analysis,archive,metadata)
+            result = verify_scenario(case_spec,source,analysis,case_archive,case_metadata)
             assert not result["passed"], mutation
+            if mutation in ("relation_parameter", "trigger_configuration", "trigger_generation", "partial_event_evidence"):
+                assert [row["name"] for row in result["checks"] if not row["passed"]] == ["结果到原始报文的关联"]
             receipt["checks"].append({"name":"reject_"+mutation, "passed":True})
         # Opening the portable document restores the exact scenario and keeps old archives.
         opened = MainWindow(args.bin_dir,output/"reopened",configuration); windows.append(opened); opened.show()
