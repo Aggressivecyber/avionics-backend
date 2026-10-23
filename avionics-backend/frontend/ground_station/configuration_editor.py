@@ -13,10 +13,10 @@ from .widgets import ThinSplitter, MotionButton as QPushButton
 
 TITLES = {"dictionary": "字典信息", "parameter": "参数", "protocol": "协议输入",
           "consistency": "一致性规则", "response": "响应规则", "limit": "参数上限规则", "clock": "时钟映射",
-          "processing": "处理设置", "pipeline": "队列预算", "capture": "采集超时"}
+          "processing": "处理设置", "pipeline": "队列预算", "capture": "采集超时", "recording": "采集分卷与容量"}
 GROUPS = [("解析字典", ("dictionary", "parameter", "protocol")),
           ("分析规则", ("consistency", "response", "limit")),
-          ("时钟与处理", ("clock", "processing", "pipeline", "capture"))]
+          ("时钟与处理", ("clock", "processing", "pipeline", "capture")), ("采集保存", ("recording",))]
 DEFAULTS = {
     "dictionary": {"schema": "2", "version": "project-v1"},
     "parameter": {"source": "sensor_a", "protocol": "65535", "channel": "0",
@@ -34,10 +34,12 @@ DEFAULTS = {
     "pipeline": {"queue_frames": "4096", "source_frames": "1024", "analysis_frames": "4096",
         "queue_bytes": "67108864", "source_bytes": "16777216", "analysis_bytes": "67108864", "max_sources": "256"},
     "capture": {"command_timeout_ms": "5000", "stop_timeout_ms": "1000"},
+    "recording": {"volume_bytes": "268435456", "volume_seconds": "1800", "warning_free_bytes": "2147483648"},
 }
 OPTIONAL = {"parameter": ("offset", "sequence_step", "valid_bit", "enum_values", "rt_address", "subaddress", "direction"),
             "protocol": ("source",)}
 LABELS = {
+    "volume_bytes": "每卷大小上限 / 字节", "volume_seconds": "每卷时长 / 秒", "warning_free_bytes": "剩余容量预警 / 字节",
     "input_source": "采集源名称", "input_parameter": "参数名称", "upper": "参数上限",
     "schema": "配置格式版本", "version": "字典版本名称", "source": "采集源名称", "protocol": "协议编号",
     "channel": "通道", "bit_offset": "起始位", "bit_width": "位宽", "byte_order": "字节顺序",
@@ -57,6 +59,9 @@ LABELS = {
     "max_sources": "采集源数量上限", "command_timeout_ms": "采集命令超时 / ms", "stop_timeout_ms": "停止超时 / ms",
 }
 HELP = {
+    "volume_bytes": "默认 268435456 字节（256 MiB）；0 关闭大小分卷。记录之间换卷，单条超限报文独立成卷。",
+    "volume_seconds": "默认 1800 秒（30 分钟）；从每卷第一条记录按单调时钟计时，到期后下一条记录写入新卷。0 关闭。",
+    "warning_free_bytes": "默认 2147483648 字节（2 GiB）。不足时底部持续预警；不会删除文件。0 关闭预警。",
     "input_source": "被检查参数所属的采集源，需要与解析字典对应。",
     "input_parameter": "需要检查上限的参数名称。",
     "upper": "严格大于上限时记录首次越限；持续越限不重复发出事件。连续有效输入恢复至上限或以下时记录恢复事件。",
@@ -271,7 +276,7 @@ class ConfigurationEditor(QWidget):
     def add_menu(self):
         menu = QMenu(self)
         for kind in GROUPS[self.group.currentIndex()][1]:
-            if kind in {"dictionary", "processing", "pipeline", "capture"} and self.document.has_section(kind):
+            if kind in {"dictionary", "processing", "pipeline", "capture", "recording"} and self.document.has_section(kind):
                 continue
             action = menu.addAction(TITLES[kind])
             action.triggered.connect(lambda checked=False, k=kind: self.add_section(k))
@@ -279,7 +284,7 @@ class ConfigurationEditor(QWidget):
 
     def add_section(self, kind):
         section = kind
-        if kind not in {"dictionary", "processing", "pipeline", "capture"}:
+        if kind not in {"dictionary", "processing", "pipeline", "capture", "recording"}:
             index = 1
             while self.document.has_section(f"{kind} new_{index}"):
                 index += 1

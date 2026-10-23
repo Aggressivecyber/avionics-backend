@@ -63,7 +63,67 @@ int main(int argc, char** argv) {
         };
         std::thread first(compete), second(compete); first.join(); second.join();
         check(winners == 1 && collisions == 1, "concurrent writers overwrote evidence");
+        const auto split = directory / "split.avbus";
+        ArchiveSummary split_summary;
+        {
+            ArchiveWriter writer(split, std::nullopt, {350, 0, false});
+            frame = {}; frame.source = "sensor"; frame.payload = {1,2,3};
+            for (std::uint64_t i = 1; i <= 10; ++i) { frame.record_index = i; writer.write(frame); }
+            writer.finish(); split_summary = writer.summary();
+        }
+        check(split_summary.volumes == 5, "size rotation failed");
+        ArchiveReader split_reader(split); count = 0;
+        while (split_reader.next(frame)) check(frame.record_index == ++count, "cross-volume record identity changed");
+        check(count == 10 && split_reader.summary().file_sha256 == split_summary.file_sha256, "split roundtrip failed");
+        Sha256 concatenated;
+        for (std::uint32_t n = 1; n <= split_summary.volumes; ++n) {
+            const auto path = archiveVolumePath(split, n);
+            check(std::filesystem::file_size(path) <= 350, "volume exceeds configured size");
+            std::ifstream stream(path, std::ios::binary);
+            const std::vector<std::uint8_t> content{std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>()};
+            concatenated.update(content);
+        }
+        check(concatenated.finish() == split_summary.file_sha256, "volume-set digest excludes a volume");
+        const auto last_volume = archiveVolumePath(split, split_summary.volumes);
+        const auto last_size = std::filesystem::file_size(last_volume);
+        std::filesystem::resize_file(last_volume, last_size - 65 - 10); // torn second record
+        const auto inspection = checkArchive(split);
+        check(!inspection.complete && inspection.archive.records == 9, "recovery scan crossed a torn record");
+        const auto restored = directory / "restored.avbus";
+        const auto recovery = recoverArchive(split, restored);
+        check(!recovery.complete && std::filesystem::file_size(last_volume) == last_size - 75, "recovery changed the source");
+        const auto restored_check = checkArchive(restored);
+        check(restored_check.complete && restored_check.archive.recovered && restored_check.archive.records == 9 &&
+            restored_check.archive.session_id == split_summary.session_id, "recovery lost identity or completeness distinction");
+        const auto missing = archiveVolumePath(split, 2);
+        std::filesystem::rename(missing, directory / "withheld.avbus");
+        check(!checkArchive(split).complete && checkArchive(split).archive.records == 2, "missing volume was ignored");
+        std::filesystem::copy_file(archiveVolumePath(split, 3), missing);
+        check(!checkArchive(split).complete && checkArchive(split).archive.records == 2, "reordered volume was accepted");
+        std::filesystem::copy_file(directory / "withheld.avbus", missing, std::filesystem::copy_options::overwrite_existing);
+        {
+            std::fstream mixed(missing, std::ios::binary | std::ios::in | std::ios::out);
+            mixed.seekg(28); char value{}; mixed.get(value); value ^= 1; mixed.seekp(28); mixed.put(value);
+        }
+        check(!checkArchive(split).complete && checkArchive(split).archive.records == 2, "previous-volume digest mismatch was accepted");
+        const auto timed = directory / "timed.avbus";
+        {
+            ArchiveWriter writer(timed, std::nullopt, {0, 1, false});
+            frame = {}; frame.source = "clock"; frame.record_index = 1; writer.write(frame);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1050));
+            frame.record_index = 2; writer.write(frame); writer.finish();
+            check(writer.summary().volumes == 2, "time rotation failed");
+        }
+        check(checkArchive(timed).complete, "timed volumes did not seal");
+        for (std::size_t cut = 24; cut < bytes.size(); ++cut) {
+            const auto torn = directory / "torn.avbus";
+            { std::ofstream out(torn, std::ios::binary); out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(cut)); }
+            const auto scan = checkArchive(torn);
+            check(!scan.complete && scan.archive.records == std::min<std::uint64_t>(3, (cut - 24) / record_bytes),
+                "byte-boundary truncation recovered an incomplete record");
+        }
         std::cout << "sealed_records=3 tamper_cases=" << bad_index << " exclusive_writers=1\n";
+        std::cout << "size_volumes=5 timed_volumes=2 recovered_records=9 byte_cuts=" << bytes.size() - 24 << '\n';
         return 0;
     } catch (const std::exception& error) { std::cerr << error.what() << '\n'; return 1; }
 }

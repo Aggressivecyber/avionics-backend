@@ -109,6 +109,15 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
             throw std::invalid_argument("capture deadlines must be within 1..600000 ms");
         empty(capture->second); sections.erase(capture);
     }
+    if (auto recording = sections.find("recording"); recording != sections.end()) {
+        config.recording.volume_bytes = number<std::uint64_t>(take(recording->second, "volume_bytes", "268435456"));
+        config.recording.volume_seconds = number<std::uint64_t>(take(recording->second, "volume_seconds", "1800"));
+        config.warning_free_bytes = number<std::uint64_t>(take(recording->second, "warning_free_bytes", "2147483648"));
+        if ((config.recording.volume_bytes && config.recording.volume_bytes < 256) ||
+            config.recording.volume_seconds > std::uint64_t(std::numeric_limits<std::int64_t>::max() / 1000000000))
+            throw std::invalid_argument("invalid recording volume size or duration");
+        empty(recording->second); sections.erase(recording);
+    }
     std::set<std::string> field_ids;
     for (auto& [section, values] : sections) {
         const auto space = section.find(' ');

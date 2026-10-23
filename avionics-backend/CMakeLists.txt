@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(avionics_backend VERSION 0.7.0 LANGUAGES C CXX)
+project(avionics_backend VERSION 0.8.0 LANGUAGES C CXX)
 
 set(AVIONICS_BUILD_REVISION "" CACHE STRING "Commit identity when building a source export without Git")
 if(NOT AVIONICS_BUILD_REVISION)
@@ -126,6 +126,10 @@ if(BUILD_TESTING)
     add_test(NAME mil1553b_protocol COMMAND mil1553b_tests "${PROJECT_SOURCE_DIR}/config/mil1553b-demo.ini" "${CMAKE_BINARY_DIR}/1553b-test-output")
     if(AVIONICS_TEST_QT_FRONTEND)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME qt_recording COMMAND "${Python3_EXECUTABLE}" -B -m ground_station.recording_check
+            --bin-dir "$<TARGET_FILE_DIR:bus_backend>" --output "${CMAKE_BINARY_DIR}/recording-test-output")
+        set_tests_properties(qt_recording PROPERTIES TIMEOUT 120 WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/frontend"
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PYTHONDONTWRITEBYTECODE=1")
         add_test(NAME qt_scenarios COMMAND "${Python3_EXECUTABLE}" -B -m ground_station.scenario_check
             --bin-dir "$<TARGET_FILE_DIR:bus_backend>" --output "${CMAKE_BINARY_DIR}/scenario-test-output")
         set_tests_properties(qt_scenarios PROPERTIES TIMEOUT 120 WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/frontend"

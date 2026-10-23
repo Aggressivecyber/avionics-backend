@@ -97,17 +97,24 @@ void FramePipeline::failAnalysis(const std::string& message, std::optional<std::
 }
 void FramePipeline::run() noexcept {
     try {
+        auto flushed = std::chrono::steady_clock::now();
         while (true) {
             RawFrame frame;
             {
                 std::unique_lock lock(mutex_);
-                available_.wait(lock, [&] { return closing_ || !queue_.empty(); });
-                if (queue_.empty()) break;
+                available_.wait_until(lock, flushed + std::chrono::seconds(1), [&] { return closing_ || !queue_.empty(); });
+                if (queue_.empty()) {
+                    if (closing_) break;
+                    lock.unlock(); recorder_->flush(); flushed = std::chrono::steady_clock::now(); continue;
+                }
                 frame = std::move(queue_.front()); queue_.pop_front();
                 const auto bytes = frameMemoryBytes(frame);
                 queued_bytes_ -= bytes; auto& used = queued_by_source_.at(frame.source); --used.frames; used.bytes -= bytes;
             }
             recorder_->write(frame); // always record before decoding.
+            if (std::chrono::steady_clock::now() - flushed >= std::chrono::seconds(1)) {
+                recorder_->flush(); flushed = std::chrono::steady_clock::now();
+            }
             {
                 std::lock_guard lock(mutex_);
                 ++stats_.recorded; ++stats_.sources.at(frame.source).recorded; completed_.notify_all();

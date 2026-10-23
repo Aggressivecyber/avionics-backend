@@ -1,5 +1,6 @@
 #include "core/processing.hpp"
 #include "core/demo_fixture.hpp"
+#include "core/analysis_json.hpp"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -314,6 +315,32 @@ void testConsistencyAndFixture(const BackendConfiguration& cfg, const std::files
     check(count(service, "consistent") == 1 && count(service, "inconsistent") == 1 && count(service, "response_observed") == 1 &&
         count(service, "response_timeout") == 1 && count(service, "response_unresolved") == 1, "fixture outcomes changed");
     for (const auto& result : service.results()) if (result.outcome == "response_observed") check(result.metric == 12, "known 12ms delay not recovered");
+    const auto segmented = output / "fixture-volumes.avbus";
+    const auto session = newSessionId();
+    {
+        ArchiveWriter writer(segmented, session, {256, 0, false});
+        for (const auto& frame : correlationFixture()) writer.write(frame);
+        writer.finish();
+        check(writer.summary().volumes == 17, "fixture did not cross volume boundaries");
+    }
+    auto volume_cfg = cfg; volume_cfg.recording_session_id = session;
+    auto reference = std::make_shared<MemorySink>(), from_volumes = std::make_shared<MemorySink>();
+    ProcessingService expected(volume_cfg, reference), actual(volume_cfg, from_volumes);
+    DictionaryDecoder volume_decoder(volume_cfg);
+    for (auto frame : correlationFixture()) {
+        frame.recording_session_id = session;
+        for (const auto& decoded : volume_decoder.decode(frame)) expected.consume(decoded);
+    }
+    expected.finish();
+    ArchiveReader joined(segmented); RawFrame raw;
+    while (joined.next(raw)) for (const auto& decoded : volume_decoder.decode(raw)) actual.consume(decoded);
+    actual.finish();
+    std::ostringstream original, restored;
+    for (const auto& item : reference->samples) writeAlignedSample(original, item);
+    for (const auto& item : reference->results) writeCorrelationResult(original, item);
+    for (const auto& item : from_volumes->samples) writeAlignedSample(restored, item);
+    for (const auto& item : from_volumes->results) writeCorrelationResult(restored, item);
+    check(original.str() == restored.str(), "volume boundaries changed parameters, decisions or evidence");
     auto memory = std::make_shared<MemorySink>(); ProcessingService separate(cfg, memory);
     auto a = sample("sensor_a", 0, 10, 0); a.parameter_id = "temperature_a"; a.unit = "degC"; a.max_age_ns = 20000000;
     auto b = a; b.source = "sensor_b"; b.parameter_id = "temperature_b"; b.unit = "K";

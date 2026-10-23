@@ -7,6 +7,9 @@ if sys.argv[1:2] == ["--analysis-job"]:
 elif sys.argv[1:2] == ["--scenario-check"]:
     from ground_station.scenario_check import main
     main(sys.argv[2:])
+elif sys.argv[1:2] == ["--recording-check"]:
+    from ground_station.recording_check import main
+    main(sys.argv[2:])
 elif sys.argv[1:2] == ["--release-check"]:
     from ground_station.release_check import main
     main(sys.argv[2:])

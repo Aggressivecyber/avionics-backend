@@ -133,7 +133,7 @@ class HistoryPlot(QWidget):
                 painter.drawText(QRectF(0,y-9,64,20), Qt.AlignmentFlag.AlignRight, f"{high-(high-low)*i/2:.4g}")
                 painter.setPen(QPen(QColor(BORDER),1))
             for series_index, series in enumerate(lane["series"]):
-                path = QPainterPath(); connected = False; epoch = None
+                path = QPainterPath(); connected = False; epoch = None; points = []
                 for t, value, usable, text,sequence in series["points"]:
                     record = json.loads(text)
                     identity = record["trigger"] if "trigger" in record else record
@@ -142,12 +142,16 @@ class HistoryPlot(QWidget):
                         connected = False; continue
                     x = area.left() + (t-self.start)/max(1e-9,self.end-self.start)*area.width()
                     y = area.bottom()-(value-low)/(high-low)*area.height()
+                    points.append(QPointF(x,y))
                     if connected and current_epoch == epoch: path.lineTo(x,y)
                     else: path.moveTo(x,y)
                     connected = True; epoch = current_epoch
                 painter.setPen(QPen(QColor(ACCENT if series_index == 0 else "#687982"),1.7,
                                     Qt.PenStyle.SolidLine if series_index == 0 else Qt.PenStyle.DashLine))
                 painter.drawPath(path)
+                painter.setBrush(QColor(ACCENT if series_index == 0 else "#687982"))
+                for point in points: painter.drawEllipse(point,1.4,1.4)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
             if self.cursor is not None:
                 x = area.left()+(self.cursor-self.start)/max(1e-9,self.end-self.start)*area.width()
                 painter.setPen(QPen(QColor(MUTED),1,Qt.PenStyle.DashLine))
@@ -160,6 +164,8 @@ class HistoryPage(QWidget):
     acceptance_requested = Signal(object)
     evidence_requested = Signal(object, object)
     export_requested = Signal(object)
+    check_requested = Signal(object)
+    recovery_requested = Signal(object)
     idle = Signal()
 
     def __init__(self):
@@ -187,6 +193,16 @@ class HistoryPage(QWidget):
         toolbar.addWidget(self.acceptance_button); toolbar.addWidget(self.refresh_button); layout.addLayout(toolbar)
         self.status = QLabel("打开项目后选择采集记录。")
         self.status.setWordWrap(True); layout.addWidget(self.status)
+        recovery = QHBoxLayout()
+        self.recovery_status = QLabel(); self.recovery_status.setWordWrap(True)
+        self.check_button = QPushButton("检查记录")
+        self.check_button.setToolTip("检查全部分卷、封口和有效记录边界；打开项目时自动检查未完成记录。")
+        self.recover_button = QPushButton("恢复有效记录")
+        self.recover_button.setToolTip("另存通过校验的连续记录，重建曲线、公式与报告，保留中断现场。")
+        self.check_button.clicked.connect(lambda:self.check_requested.emit(self.runs.currentData()))
+        self.recover_button.clicked.connect(lambda:self.recovery_requested.emit(self.runs.currentData()))
+        recovery.addWidget(self.recovery_status,1); recovery.addWidget(self.check_button); recovery.addWidget(self.recover_button)
+        layout.addLayout(recovery)
         self.tabs = QTabWidget(); layout.addWidget(self.tabs,1)
         workspace = QWidget(); work = QVBoxLayout(workspace); work.setContentsMargins(0,12,0,0)
         ranges = QHBoxLayout()
@@ -266,6 +282,14 @@ class HistoryPage(QWidget):
         self.parameters.blockSignals(True); self.parameters.clear(); self.parameters.blockSignals(False)
         self.start.setValue(0); self.end.setValue(0)
         run = self.runs.currentData()
+        self.check_button.setEnabled(run is not None)
+        check = run.get("recovery_check") if run else None
+        self.recover_button.setEnabled(bool(check and check["archive"]["records"] > 0 and run["status"] in {"待恢复","异常","未封存","待校验"}))
+        self.recovery_status.setText("中断恢复副本 · 原始采集未完整结束" if run and run["status"] == "已恢复" else
+            f"有效前缀 {check['archive']['records']:,} 帧 · " + ("封口完整" if check["status"] == "complete" else "记录未完整结束") if check else "")
+        self.recovery_status.setToolTip(check["error"] if check else "")
+        self.plot.set_data({"lanes":[], "start":0, "end":1}); self.events.setRowCount(0)
+        self.raw_button.setEnabled(False)
         self.acceptance_button.setEnabled(bool(run and "scenario_acceptance" in run))
         if run:
             self.run_label.setText(run["label"]); self.notes.setPlainText(run["notes"])
@@ -292,6 +316,9 @@ class HistoryPage(QWidget):
     def load_query(self):
         run = self.runs.currentData()
         if not run or not self.project:
+            return
+        if run["status"] in {"待恢复","不可恢复","待校验","未封存","异常"}:
+            self.status.setText("本次采集未确认完整结束；请检查并恢复有效记录后查看重建结果。")
             return
         if self.query_active:
             self.query_pending = True

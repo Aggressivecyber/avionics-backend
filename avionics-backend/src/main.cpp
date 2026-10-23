@@ -78,7 +78,8 @@ int main(int argc, char** argv) {
         if (std::filesystem::exists(session_path)) throw std::runtime_error("session metadata already exists");
         std::optional<BackendConfiguration> configuration;
         if (argc == 4) configuration = BackendConfiguration::load(pathFromUtf8(argv[3]));
-        auto recorder = std::make_unique<ArchiveWriter>(archive);
+        auto recorder = std::make_unique<ArchiveWriter>(archive, std::nullopt,
+            configuration ? configuration->recording : RecordingOptions{});
         const auto* recording = recorder.get();
         auto analyzer = std::make_shared<RuleAnalyzer>(22.0);
         std::shared_ptr<ProcessingService> service;
@@ -115,7 +116,7 @@ int main(int argc, char** argv) {
         if (!control) std::cout << "archive=" << absolutePath(archive).string() << '\n';
         {
             BusManager buses(pipeline, journal, capture);
-            if (control) runControlConsole(buses, *pipeline, *service, *monitor, *journal, archive, *configuration);
+            if (control) runControlConsole(buses, *pipeline, *service, *monitor, *journal, archive, *configuration, *recording);
             else if (demo) {
                 const auto plugin = pathFromUtf8(argv[2]);
                 buses.add("primary", plugin, "period_ms=5;initial_milli=20000;step_milli=500");

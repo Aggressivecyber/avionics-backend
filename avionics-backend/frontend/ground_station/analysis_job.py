@@ -5,15 +5,18 @@ from contextlib import closing
 import hashlib
 import html
 import json
+import os
 from pathlib import Path
 import sqlite3
 import sys
+import subprocess
 import threading
 import time
 
 from .project import read_shared, write_json
 from .relations import RelationEngine
 from .outcomes import OUTCOME_LABELS
+from .recording import archive_identity
 
 
 def encode(value):
@@ -86,7 +89,7 @@ def export_report(directory, metadata, export_csv=False):
             if x0 is None:
                 continue
             displayed = preview_points(db.execute("SELECT seq,t,value,usable,payload FROM relations WHERE id=? ORDER BY seq",(identifier,)),0,max((x1-x0)/1e9,1e-9),x0,350)
-            path = []; connected = False; epoch = None
+            path = []; points = []; connected = False; epoch = None
             for t,value,usable,text,sequence in displayed:
                 row = json.loads(text)
                 current_epoch = tuple(row["trigger"][key] for key in ("generation","recording_session_id"))
@@ -94,11 +97,13 @@ def export_report(directory, metadata, export_csv=False):
                     connected = False
                     continue
                 x,y = 40+t/max((x1-x0)/1e9,1e-9)*720,170-(value-y0)/max(1e-12,y1-y0)*140
+                points.append(f'<circle cx="{x:.2f}" cy="{y:.2f}" r="1.6" fill="#087e8b"/>')
                 path.append(f"{'L' if connected and epoch == current_epoch else 'M'}{x:.2f},{y:.2f}")
                 connected = True; epoch = current_epoch
             charts.append(f"<h3>{html.escape(names[identifier]['name'])} / {html.escape(names[identifier]['unit'])}</h3>"
                           f'<svg viewBox="0 0 800 210" role="img"><path d="M40 20V175H770" fill="none" stroke="#dfe4e6"/>'
                           f'<path d="{" ".join(path)}" fill="none" stroke="#087e8b" stroke-width="1.7"/>'
+                          f'{"".join(points)}'
                           f'<text x="40" y="200">0 s</text><text x="650" y="200">{(x1-x0)/1e9:.6g} s</text>'
                           f'<text x="40" y="16">{y0:.6g} .. {y1:.6g}</text></svg>')
         steps = "".join(f"<li>{html.escape(step)}</li>" for step in run.get("steps", []))
@@ -110,7 +115,8 @@ def export_report(directory, metadata, export_csv=False):
                              f"<td>{event['time_ns']/1e9:.6f}</td><td>{html.escape(evidence)}</td></tr>")
         archive = html.escape(run.get("archive",metadata["archive"]))
         build_text = html.escape(encode(metadata["build"]))
-        state = "完整参数计算完成" if metadata["status"] == "complete" else "输入未完整结束，结果供诊断"
+        state = ("完整参数计算完成" if metadata["status"] == "complete" else
+                 "中断恢复：有效记录已重新分析，原始采集未完整结束" if metadata["status"] == "recovered" else "输入未完整结束，结果供诊断")
         acceptance_link = '<p><a href="acceptance.html">查看场景验收：预期与实际逐项比对</a></p>' if (directory / "acceptance.html").exists() else ""
         content = f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>AEROBUS 试验报告</title>
 <style>body{{font:15px 'Microsoft YaHei UI',sans-serif;color:#20292e;max-width:1000px;margin:44px auto;padding:0 24px}}h1{{font-size:28px}}h2{{font-size:19px;margin-top:32px}}table{{border-collapse:collapse;width:100%}}td,th{{text-align:left;padding:10px;border-bottom:1px solid #e4e8ea}}code{{overflow-wrap:anywhere}}p{{line-height:1.7}}svg{{width:100%;max-height:230px}}.meta{{color:#566770;overflow-wrap:anywhere}}@media print{{body{{margin:0}}h2{{break-after:avoid}}tr,svg{{break-inside:avoid}}}}</style>
@@ -236,14 +242,16 @@ def run_analysis(input_analysis, definitions, output, archive, follow=False):
         result_stream = None
         with (output / result_name).open("rb") as stream:
             metadata["results_sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
-        with Path(archive).open("rb") as stream:
-            metadata["archive_sha256"] = hashlib.file_digest(stream,"sha256").hexdigest()
+        identity = archive_identity(archive)
+        metadata["archive_sha256"] = identity["file_sha256"]
+        metadata["archive_volumes"] = identity["volumes"]
+        metadata["recovered"] = identity["recovered"]
         metadata["configuration_sha256"] = hashlib.sha256((input_analysis / "configuration.ini").read_bytes()).hexdigest()
         provenance = output.parent / "run.json"
-        metadata["build"] = (json.loads(provenance.read_text(encoding="utf-8"))["build"] if provenance.exists() else
-                             json.loads((input_analysis / "summary.json").read_text(encoding="utf-8"))["build"])
+        analysis_receipt = input_analysis / "summary.json"
+        metadata["build"] = json.loads((analysis_receipt if analysis_receipt.exists() else provenance).read_text(encoding="utf-8"))["build"]
         capture_result = output.parent / "capture-result.json"
-        metadata["status"] = "complete"
+        metadata["status"] = "recovered" if identity["recovered"] else "complete"
         if follow and (not capture_result.exists() or json.loads(capture_result.read_text(encoding="utf-8"))["analysis_status"] != "complete"):
             metadata["status"] = "partial"
         db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -278,10 +286,21 @@ def main(arguments=None):
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--follow", action="store_true")
     parser.add_argument("--export", action="store_true")
+    parser.add_argument("--recover-source", type=Path)
+    parser.add_argument("--analyzer", type=Path)
+    parser.add_argument("--configuration", type=Path)
     args = parser.parse_args(arguments)
     if args.export:
         export_report(args.output, json.loads((args.output / "summary.json").read_text(encoding="utf-8")), True)
     else:
+        if args.recover_source:
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            for command in (["--recover", args.recover_source, args.archive],
+                            ["--analyze", args.configuration, args.archive, args.input]):
+                result = subprocess.run([str(args.analyzer), *map(str, command)], capture_output=True,
+                                        encoding="utf-8", creationflags=flags)
+                if result.returncode:
+                    raise RuntimeError(result.stderr.strip() or f"恢复程序退出：{result.returncode}")
         metadata = run_analysis(args.input, args.relations, args.output, args.archive, args.follow)
         print(encode(metadata))
 

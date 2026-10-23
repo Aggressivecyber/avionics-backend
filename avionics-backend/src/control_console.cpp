@@ -8,6 +8,13 @@
 #include <locale>
 #include <set>
 #include <sstream>
+#if defined(_WIN32)
+#define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
 
 namespace avionics {
 void MonitorSink::sample(const AlignedSample& sample) {
@@ -69,12 +76,14 @@ void writeStatus(std::ostream& out, const AdapterStatus& s) {
 }
 void runControlConsole(BusManager& buses, const FramePipeline& pipeline, const ProcessingService& service,
     const MonitorSink& monitor, const SessionJournal& journal, const std::filesystem::path& archive,
-    const BackendConfiguration& configuration) {
+    const BackendConfiguration& configuration, const ArchiveWriter& recording) {
     const auto utf8 = absolutePath(archive).u8string();
     std::cout << "{\"schema\":1,\"type\":\"ready\",\"archive\":" << jsonString(std::string(utf8.begin(), utf8.end()))
         << ",\"configuration_sha256\":" << jsonString(hexIdentity(configuration.document->sha256)) << ",\"build\":";
     writeBuildInfo(std::cout); std::cout << "}\n" << std::flush;
     std::set<std::string> sources;
+    auto space_checked = std::chrono::steady_clock::time_point::min();
+    std::uintmax_t available_bytes{};
     std::string line;
     while (std::getline(std::cin, line)) {
         std::uint64_t request{};
@@ -91,7 +100,23 @@ void runControlConsole(BusManager& buses, const FramePipeline& pipeline, const P
                 if (!(input >> after_sample >> after_event)) throw std::invalid_argument("snapshot requires two cursors");
                 end();
                 const auto s = pipeline.stats(); const auto p = service.stats();
+                const auto now = std::chrono::steady_clock::now();
+                if (space_checked == std::chrono::steady_clock::time_point::min() || now - space_checked >= std::chrono::seconds(1)) {
+                    const auto directory = absolutePath(archive).parent_path();
+#if defined(_WIN32)
+                    ULARGE_INTEGER available{};
+                    if (!GetDiskFreeSpaceExW(directory.c_str(), &available, nullptr, nullptr))
+                        throw std::runtime_error("disk capacity query failed; Windows error " + std::to_string(GetLastError()));
+                    available_bytes = available.QuadPart;
+#else
+                    available_bytes = std::filesystem::space(directory).available;
+#endif
+                    space_checked = now;
+                }
                 data << "{\"accepted\":" << s.accepted << ",\"recorded\":" << s.recorded << ",\"dropped\":" << s.dropped
+                    << ",\"storage\":{\"volumes\":" << recording.currentVolume() << ",\"volume_bytes\":" << recording.volumeBytes()
+                    << ",\"available_bytes\":" << available_bytes << ",\"warning_free_bytes\":" << configuration.warning_free_bytes
+                    << ",\"low_space\":" << (configuration.warning_free_bytes && available_bytes < configuration.warning_free_bytes ? "true" : "false") << '}'
                     << ",\"healthy\":" << (s.healthy ? "true" : "false") << ",\"failure\":" << jsonString(s.failure)
                     << ",\"analysis_healthy\":" << (s.analysis_healthy ? "true" : "false")
                     << ",\"analysis_failure\":" << jsonString(s.analysis_failure)

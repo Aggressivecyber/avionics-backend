@@ -87,7 +87,7 @@ class Project:
                 raise ValueError("项目采集记录字段格式不正确。")
             for key in ("archive","analysis","relations"):
                 project.resource(run[key])
-            if run["status"] not in {"已封存","已降级","异常","未封存","待校验"}:
+            if run["status"] not in {"已封存","已降级","异常","未封存","待校验","待恢复","不可恢复","已恢复"}:
                 run["status"] = "待校验"
         return project
 

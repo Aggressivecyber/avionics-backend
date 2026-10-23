@@ -34,6 +34,19 @@ int main(int argc, char** argv) {
             while (reader.next(frame)) {}
             writeArchiveSummary(std::cout, reader.summary()); std::cout << '\n'; return 0;
         }
+        if (argc == 3 && std::string(argv[1]) == "--check") {
+            writeArchiveCheck(std::cout, checkArchive(pathFromUtf8(argv[2]))); std::cout << '\n'; return 0;
+        }
+        if (argc == 4 && std::string(argv[1]) == "--recover") {
+            const auto destination = pathFromUtf8(argv[3]);
+            auto receipt = destination; receipt += ".recovery.json";
+            if (std::filesystem::exists(receipt)) throw std::runtime_error("recovery receipt already exists");
+            const auto check = recoverArchive(pathFromUtf8(argv[2]), destination);
+            std::ofstream output(receipt, std::ios::binary);
+            writeArchiveCheck(output, check); output << '\n'; output.close();
+            if (!output) throw std::runtime_error("cannot save recovery receipt");
+            writeArchiveCheck(std::cout, check); std::cout << '\n'; return 0;
+        }
         if (argc == 4 && std::string(argv[1]) == "--record") {
             std::size_t consumed{};
             const auto index = std::stoull(argv[3], &consumed);
@@ -90,6 +103,8 @@ int main(int argc, char** argv) {
             std::cout << "Usage: bus_analyze --fixture NEW_ARCHIVE\n"
                 << "       bus_analyze --validate-config CONFIG_INI\n"
                 << "       bus_analyze --inspect INPUT_ARCHIVE\n"
+                << "       bus_analyze --check FIRST_VOLUME\n"
+                << "       bus_analyze --recover FIRST_VOLUME NEW_ARCHIVE\n"
                 << "       bus_analyze --record INPUT_ARCHIVE RECORD_INDEX\n"
                 << "       bus_analyze --analyze CONFIG_INI INPUT_ARCHIVE NEW_OUTPUT_DIRECTORY\n";
             return argc == 1 ? 0 : 2;

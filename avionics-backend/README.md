@@ -1,6 +1,6 @@
-# 地面总线监测工作台 · v0.7.0
+# 地面总线监测工作台 · v0.8.0
 
-Release版解压后双击 `AEROBUS.exe`，已随包提供 Python／Qt 运行库。v0.7新增[场景验证与自动验收](docs/scenario-acceptance.md)：正常运行、参数越限、响应超时可在插件中心配置、保存和复现，结束后逐项比较预期与实际并查看原始报文。按钮、页面切换和插件状态提供短促动效。项目管理、完整公式计算、历史比较、原始报文查看、报告与CSV导出继续保留；使用方法见[桌面交付说明](docs/release-v0.6.md)。
+Release版解压后双击 `AEROBUS.exe`，已随包提供 Python／Qt 运行库。v0.8新增[按大小或时间分卷、容量预警和中断恢复](docs/recording-recovery.md)，恢复后的曲线、公式、原始报文和报告保持可追溯。已有[场景验证与自动验收](docs/scenario-acceptance.md)、短促动效、项目管理、完整公式计算、历史比较、报告与CSV导出继续保留；使用方法见[桌面交付说明](docs/release-v0.6.md)。
 
 面向地面试验、总线监测和数据分析的 Qt 6 桌面前端与 C++20 后端。当前支持模拟采集、回放、配置化参数解码、事件时间处理和关联分析，并新增1553B合成监控记录的协议处理。第一种目标总线已确定为 MIL-STD-1553B；采集卡 SDK、设备 ICD、时钟同步与设备负载验收待选型。
 
@@ -85,7 +85,7 @@ python scripts/verify_capture_cli.py --build build-gcc-release
 源码提交后重新配置并构建，确保 `--version` 无 `dirty` 标记，再运行：
 
 ```powershell
-python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/AEROBUS-v0.7.0 --freeze-python E:/avionics-tools/aerobus-release-env/Scripts/python.exe
+python scripts/package_release.py --build E:/path/build-gcc-release --output E:/avionics-releases/AEROBUS-v0.8.0 --freeze-python E:/avionics-tools/aerobus-release-env/Scripts/python.exe
 ```
 
 便携包包含 Qt 桌面程序、Python/Qt 运行库、宿主、采集进程、分析程序、三个内置设备插件、匹配的 MinGW 运行库及许可证、配置、素材、文档、源码导出和 SHA-256 清单。发布使用独立目录，退出旧会话后切换目录；原始归档和旧目录保留，便于回退开发改动。失败替换会尝试恢复旧实例并明确报告结果。

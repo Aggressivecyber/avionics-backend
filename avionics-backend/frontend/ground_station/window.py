@@ -146,6 +146,11 @@ class MainWindow(QMainWindow):
         self.capture_started = False
         self.pending_scenario = None
         self.scenario_sealing = False
+        self.recording_process = QProcess(self)
+        self.recording_process.finished.connect(self.recording_finished)
+        self.recording_process.errorOccurred.connect(self.recording_error)
+        self.recording_mode = None
+        self.pending_recording_checks = []
         self.relation_process = QProcess(self)
         self.relation_buffer = bytearray()
         self.latest_complete = None
@@ -311,6 +316,8 @@ class MainWindow(QMainWindow):
         self.history_page.evidence_requested.connect(self.request_raw_record)
         self.history_page.acceptance_requested.connect(self.show_scenario_result)
         self.history_page.export_requested.connect(self.export_run)
+        self.history_page.check_requested.connect(self.check_recording)
+        self.history_page.recovery_requested.connect(self.recover_recording)
         self.history_page.idle.connect(self.history_idle)
         self.pages.addWidget(self.history_page)
         sheet_layout.addWidget(self.pages, 1)
@@ -329,6 +336,8 @@ class MainWindow(QMainWindow):
         self.archive_path.setReadOnly(True)
         self.archive_path.setPlaceholderText("新建项目后显示相对根目录的归档路径")
         self.status_bar.addPermanentWidget(self.recording_status)
+        self.capacity_status = label("", "muted")
+        self.status_bar.addPermanentWidget(self.capacity_status)
         self.status_bar.addPermanentWidget(label("· 自动保存为：", "muted"))
         self.status_bar.addPermanentWidget(self.archive_path, 1)
         self.setStatusBar(self.status_bar)
@@ -402,6 +411,9 @@ class MainWindow(QMainWindow):
         self.relative_paths.setWordWrap(True)
         self.relative_paths.setToolTip("这些是相对于项目根目录的路径；底部在新建项目后显示实际归档的相对路径。")
         fields.addWidget(self.relative_paths)
+        self.recording_options_button = button("设置分卷与容量预警", self.edit_recording_options, icon_name="settings")
+        self.recording_options_button.setToolTip("默认每 256 MiB 或 30 分钟换卷，剩余 2 GiB 时预警。设置随字典与规则保存，下一次采集生效。")
+        fields.addWidget(self.recording_options_button)
         basic_layout.addWidget(settings)
         help_text = label("在“字典与规则”页直接编辑并保存配置。启用插件后，点击左下角“开始采集”。", "muted")
         help_text.setWordWrap(True)
@@ -766,12 +778,14 @@ class MainWindow(QMainWindow):
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.data_dir)))
 
     def new_project(self):
+        if self.recording_mode or self.pending_recording_checks:
+            return
         self.project = None
         self.current_run = None
         self.new_session()
 
     def new_session(self):
-        if self.client.active:
+        if self.client.active or self.recording_mode or self.pending_recording_checks:
             return
         if not self.apply_root_directory():
             return
@@ -875,6 +889,10 @@ class MainWindow(QMainWindow):
             self.capture_button.setEnabled(prepared and not self.config_editor.dirty)
         self.capture_button.setToolTip("启动本项目中已启用且就绪的采集源，开始接收数据并自动保存。" if ready else
             "启用所需插件或添加采集源后，才能开始采集。正在采集或已停用的来源不会重复启动。")
+        if self.recording_mode or self.pending_recording_checks:
+            self.capture_button.setEnabled(False)
+        for plugin in self.plugin_center.cards.values():
+            plugin.setEnabled(not self.recording_mode and not self.pending_recording_checks)
 
     def start_capture(self):
         if not self.client.active:
@@ -1120,6 +1138,11 @@ class MainWindow(QMainWindow):
 
     def on_snapshot(self, snapshot):
         self.latest_snapshot = snapshot
+        storage = snapshot["storage"]
+        self.capacity_status.setText(("容量预警 · " if storage["low_space"] else "") +
+            f"第{storage['volumes']}卷 · 剩余 {storage['available_bytes']/1024**3:.1f} GiB")
+        self.capacity_status.setStyleSheet(ALERT_STYLE if storage["low_space"] else "")
+        self.capacity_status.setToolTip(f"当前卷 {storage['volume_bytes']:,} 字节；预警线 {storage['warning_free_bytes']/1024**3:.1f} GiB。")
         if self.current_run and "scenario" in self.current_run and self.capture_started and not self.scenario_sealing and not self.client.closing:
             spec = self.current_run["scenario"]
             source = next((row for row in snapshot["sources"] if row["id"] == "scenario"), None)
@@ -1260,6 +1283,7 @@ class MainWindow(QMainWindow):
         if not active:
             self.plugin_action_pending = False
         editable = not active and self.configuration_process.state() == QProcess.ProcessState.NotRunning and self.relation_process.state() == QProcess.ProcessState.NotRunning
+        editable = editable and not self.recording_mode and not self.pending_recording_checks
         prepared = (active and self.client.is_ready and not self.client.closing and not self.capture_started
                     and not self.busy and not self.capture_after_ready
                     and self.configuration_process.state() == QProcess.ProcessState.NotRunning)
@@ -1267,6 +1291,10 @@ class MainWindow(QMainWindow):
         for widget in (self.storage_button, self.storage_label, self.project_name):
             widget.setEnabled(editable)
         self.config_editor.setEnabled(configuration_editable)
+        self.recording_options_button.setEnabled(configuration_editable)
+        self.history_page.check_button.setEnabled(editable and self.history_page.runs.currentData() is not None)
+        selected_run = self.history_page.runs.currentData()
+        self.history_page.recover_button.setEnabled(bool(editable and selected_run and selected_run["status"] == "待恢复"))
         for widget in (self.new_button, self.config_button, self.preset_selector):
             widget.setEnabled(editable and not self.config_editor.dirty)
         for widget in (self.open_project_button,self.recent_projects,self.save_project_button):
@@ -1340,6 +1368,7 @@ class MainWindow(QMainWindow):
             if self.current_run:
                 self.current_run["status"] = "未封存"
                 self.save_project()
+                self.pending_recording_checks.append(self.current_run["id"])
                 self.relation_process.write(b"finish\n")
                 self.relation_process.closeWriteChannel()
         if self.close_pending:
@@ -1445,19 +1474,21 @@ class MainWindow(QMainWindow):
                 raise ValueError(self.offline_stderr.decode("utf-8", errors="replace").strip() or f"分析进程退出：{exit_code}")
             if mode == "inspect":
                 summary = json.loads(self.offline_stdout.decode("utf-8"))
-                self.offline_summary_label.setText(f"归档校验通过 · {summary['records']:,} 帧")
+                self.offline_summary_label.setText(("恢复副本 · " if summary["recovered"] else "") + f"归档校验通过 · {summary['records']:,} 帧 / {summary['volumes']} 卷")
             else:
                 summary = json.loads((self.analysis_output / "summary.json").read_text(encoding="utf-8"))
                 self.offline_parameter_model.clear()
                 self.offline_event_model.clear()
                 self.offline_parameter_model.update_samples(read_jsonl_tail(self.analysis_output / "parameters.jsonl"))
                 self.offline_event_model.append(read_jsonl_tail(self.analysis_output / "events.jsonl", 200))
-                self.offline_summary_label.setText(f"分析完成 · {summary['records']:,} 帧 / {summary['samples']:,} 样本 / {summary['results']:,} 事件")
+                self.offline_summary_label.setText(("恢复副本 · " if summary["archive"]["recovered"] else "") + f"分析完成 · {summary['records']:,} 帧 / {summary['samples']:,} 样本 / {summary['results']:,} 事件")
             self.offline_summary = summary
             if mode == "analyze":
                 self.start_offline_relations()
             self.offline_detail.setPlainText(json.dumps(summary, ensure_ascii=False, indent=2))
             self.offline_status.setText("校验通过，封存摘要与数据一致。" if mode == "inspect" else "完成 · 表格显示末尾数据，完整结果已写入输出目录。")
+            if (summary if mode == "inspect" else summary["archive"])["recovered"]:
+                self.offline_status.setText("中断恢复副本：本次分析覆盖可恢复数据，原始采集未完整结束。")
             if mode == "inspect":
                 self.offline_tabs.setCurrentIndex(2)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, ValueError) as error:
@@ -1487,7 +1518,7 @@ class MainWindow(QMainWindow):
 
     def open_project(self,path):
         try:
-            if self.client.active or self.relation_process.state() != QProcess.ProcessState.NotRunning:
+            if self.client.active or self.relation_process.state() != QProcess.ProcessState.NotRunning or self.recording_mode:
                 raise ValueError("请先结束采集并等待完整分析保存。")
             if self.config_editor.dirty:
                 raise ValueError("请先保存或放弃当前配置修改。")
@@ -1516,9 +1547,111 @@ class MainWindow(QMainWindow):
             self.history_page.set_project(project,select_latest=True)
             self.navigate(layout.get("page",5))
             self.set_project_state("等待中","项目已打开，点击开始采集会创建新一轮记录；已有记录保留。")
+            self.capacity_status.clear()
+            self.pending_recording_checks = [run["id"] for run in project.document["runs"]
+                if run["status"] in {"未封存","待校验","异常","待恢复"} and "recovered_to" not in run]
+            self.start_recording_check()
             self.on_active(False)
         except (OSError,ValueError,KeyError,ConfigurationError) as error:
             self.on_error("项目打开失败："+str(error))
+
+    def edit_recording_options(self):
+        self.navigate(4)
+        self.project_tabs.setCurrentIndex(1)
+        self.config_editor.group.setCurrentIndex(3)
+        if not self.config_editor.document.has_section("recording"):
+            self.config_editor.add_section("recording")
+
+    def check_recording(self, run):
+        if run and not self.client.active and not self.recording_mode:
+            self.pending_recording_checks.append(run["id"])
+            self.start_recording_check()
+
+    def start_recording_check(self):
+        if (not self.pending_recording_checks or self.recording_mode or self.client.active or
+                self.relation_process.state() != QProcess.ProcessState.NotRunning):
+            return
+        identifier = self.pending_recording_checks.pop(0)
+        self.recording_run = next(run for run in self.project.document["runs"] if run["id"] == identifier)
+        self.recording_mode = "check"
+        self.history_page.recovery_status.setText("正在检查分卷及未完成记录…")
+        suffix = ".exe" if os.name == "nt" else ""
+        self.recording_process.start(str(self.bin_dir / ("bus_analyze"+suffix)),
+            ["--check", str(self.project.resource(self.recording_run["archive"]))])
+        self.on_active(False)
+
+    def recover_recording(self, selected):
+        if not selected or self.client.active or self.recording_mode or self.pending_recording_checks:
+            return
+        try:
+            if self.relation_process.state() != QProcess.ProcessState.NotRunning:
+                raise ValueError("请等待完整分析进程结束后恢复。")
+            source = next(run for run in self.project.document["runs"] if run["id"] == selected["id"])
+            original = self.project.resource(source["archive"])
+            configuration = Path(str(original)+".analysis") / "configuration.ini"
+            configuration_bytes = configuration.read_bytes()
+            relations_bytes = self.project.resource(source["relations"]).read_bytes()
+            source_document = original.parent / "run.json"
+            steps = json.loads(source_document.read_text(encoding="utf-8"))["steps"] if source_document.exists() else []
+            run = self.project.new_run()
+            run.update(label=source["label"]+" · 恢复", status="恢复中", notes=source["notes"],
+                       source_run_id=source["id"], source_archive=source["archive"], capture_status="recovered")
+            archive = self.project.resource(run["archive"])
+            saved_config = archive.parent / "recovery-configuration.ini"
+            saved_config.write_bytes(configuration_bytes)
+            self.project.resource(run["relations"]).write_bytes(relations_bytes)
+            write_json(archive.parent / "run.json", {**run, "steps":steps})
+            self.project.save()
+            self.current_run = None
+            self.recording_source, self.recording_run = source, run
+            self.recording_mode = "recover"
+            self.history_page.set_project(self.project,select_latest=True)
+            self.history_page.recovery_status.setText("正在另存有效记录并重建曲线、公式与报告…")
+            suffix = ".exe" if os.name == "nt" else ""
+            start_analysis_process(self.recording_process, ["--recover-source",str(original),
+                "--analyzer",str(self.bin_dir / ("bus_analyze"+suffix)), "--configuration",str(saved_config),
+                "--input",str(archive)+".analysis", "--relations",str(self.project.resource(run["relations"])),
+                "--archive",str(archive), "--output",str(self.project.resource(run["analysis"]))])
+            self.on_active(False)
+        except (OSError,ValueError,KeyError) as error:
+            self.on_error("恢复无法启动："+str(error))
+
+    def recording_error(self, error):
+        if error == QProcess.ProcessError.FailedToStart:
+            self.recording_finished(-1,QProcess.ExitStatus.CrashExit)
+
+    def recording_finished(self, code, status):
+        mode, run = self.recording_mode, self.recording_run
+        self.recording_mode = None
+        output = bytes(self.recording_process.readAllStandardOutput()).decode("utf-8")
+        error = bytes(self.recording_process.readAllStandardError()).decode("utf-8",errors="replace")
+        try:
+            if code != 0 or status != QProcess.ExitStatus.NormalExit:
+                raise ValueError(error.strip() or self.recording_process.errorString())
+            result = json.loads(output)
+            if mode == "check":
+                run["recovery_check"] = result
+                if result["status"] != "complete" or run["status"] not in {"已封存","已降级","已恢复"}:
+                    run["status"] = "待恢复" if result["archive"]["records"] else "不可恢复"
+                self.message.setText(f"{run['label']}：已检查 {result['archive']['records']:,} 条有效记录 · {run['status']}")
+            else:
+                if result["status"] != "recovered":
+                    raise ValueError("恢复结果缺少中断标记。")
+                run.update(status="已恢复", analysis_status="complete", relation_status="recovered", build=result["build"])
+                self.recording_source["recovered_to"] = run["id"]
+                self.message.setText("恢复完成：有效记录已另存，曲线、公式与报告已重建；原始采集未完整结束。")
+                path = self.project.resource(run["archive"]).parent / "run.json"
+                document = json.loads(path.read_text(encoding="utf-8")); document.update(run); write_json(path,document)
+            self.project.save()
+        except (OSError,UnicodeDecodeError,ValueError,KeyError) as failure:
+            run["status"] = "异常"; run["recovery_error"] = str(failure)
+            self.project.save()
+            self.on_error("记录检查或恢复失败："+str(failure))
+        self.history_page.set_project(self.project,select_latest=mode == "recover")
+        self.start_recording_check()
+        self.on_active(False)
+        if self.close_pending:
+            self.close()
 
     def save_project(self,notify=False):
         if not self.project:
@@ -1600,6 +1733,7 @@ class MainWindow(QMainWindow):
         self.on_active(self.client.active)
         if self.pending_scenario is not None and not self.client.active and not self.close_pending:
             self.prepare_scenario(self.pending_scenario)
+        self.start_recording_check()
         if self.close_pending:
             self.close()
 
@@ -1686,6 +1820,11 @@ class MainWindow(QMainWindow):
             self.close()
 
     def closeEvent(self, event):
+        if self.recording_mode:
+            self.close_pending = True
+            self.message.setText("正在检查或恢复记录，完成后关闭。")
+            event.ignore()
+            return
         if self.configuration_process.state() != QProcess.ProcessState.NotRunning:
             self.close_pending = True
             event.ignore()

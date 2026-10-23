@@ -241,7 +241,7 @@ void testLifecycle(const std::filesystem::path& simulated, const std::filesystem
     const std::filesystem::path& incompatible, const std::filesystem::path& dir) {
     const auto archive = dir / u8"capture_中文.avbus";
     auto analyzer = std::make_shared<RuleAnalyzer>(22, 10000);
-    auto pipeline = std::make_shared<FramePipeline>(8192, std::make_unique<ArchiveWriter>(archive),
+    auto pipeline = std::make_shared<FramePipeline>(8192, std::make_unique<ArchiveWriter>(archive, std::nullopt, RecordingOptions{2048, 0, false}),
         std::make_unique<SimulatedDecoder>(), analyzer);
     {
         BusManager buses(pipeline);
@@ -284,7 +284,7 @@ void testLifecycle(const std::filesystem::path& simulated, const std::filesystem
     std::size_t records{};
     { ArchiveReader reader(archive); RawFrame f; while (reader.next(f)) {
         ++records; check(f.record_index == records && f.ingest_time_ns >= f.capture_time_ns, "capture identity/time lost");
-      } }
+      } check(reader.summary().volumes > 1, "capture/replay fixture did not span volumes"); }
     check(records == stats.accepted, "archive does not contain all accepted frames");
 
     // Switch a live simulated adapter to a DIFFERENT plugin library, then replay

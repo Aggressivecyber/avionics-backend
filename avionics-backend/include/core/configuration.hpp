@@ -1,5 +1,6 @@
 #pragma once
 #include "core/parameter_interfaces.hpp"
+#include "core/archive.hpp"
 #include "core/pipeline_limits.hpp"
 #include "core/protocol_types.hpp"
 #include <filesystem>
@@ -70,6 +71,8 @@ struct BackendConfiguration {
     std::size_t max_reorder_samples{8192};
     std::uint64_t allowed_lateness_ns{};
     PipelineLimits pipeline;
+    RecordingOptions recording{268435456, 1800, false};
+    std::uint64_t warning_free_bytes{2147483648};
     std::uint32_t capture_command_timeout_ms{5000}, capture_stop_timeout_ms{1000};
     std::vector<FieldDefinition> fields;
     std::vector<ProtocolInputDefinition> protocol_inputs;

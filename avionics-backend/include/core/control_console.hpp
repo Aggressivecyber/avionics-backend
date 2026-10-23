@@ -20,5 +20,5 @@ private:
     std::deque<std::pair<std::uint64_t, CorrelationResult>> events_;
 };
 void runControlConsole(BusManager&, const FramePipeline&, const ProcessingService&, const MonitorSink&,
-    const SessionJournal&, const std::filesystem::path&, const BackendConfiguration&);
+    const SessionJournal&, const std::filesystem::path&, const BackendConfiguration&, const ArchiveWriter&);
 }
