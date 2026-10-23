@@ -18,7 +18,7 @@ DEFAULT = {"schema": 1, "kind": "normal", "period_ms": 20, "duration_ms": 4000,
 def validate(document):
     if not isinstance(document, dict) or set(document) != set(DEFAULT):
         raise ValueError("场景字段不完整或含有未知字段。")
-    if document["schema"] != 1 or document["kind"] not in NAMES:
+    if document["schema"] != 1 or not isinstance(document["kind"], str) or document["kind"] not in NAMES:
         raise ValueError("不支持的场景类型或版本。")
     for key in set(DEFAULT) - {"kind"}:
         if type(document[key]) is not int:
@@ -154,11 +154,24 @@ def verify_scenario(spec, input_analysis, output, archive, metadata):
     check("告警与响应事件", events_match and all(row["time_group"] == "scenario" for row in events),
           describe_events(expected), describe_events(actual), event_evidence[0] if event_evidence else first)
     lookup = {(row["parameter"], row["record_index"]): row for row in samples}
-    evidence_ok = bool(event_evidence)
-    for item in event_evidence + [e for row in relations if row["usable"] for e in row["evidence"]]:
+    def linked(item, time_ns):
         row = lookup.get((item["parameter"], item["record_index"]))
-        evidence_ok = evidence_ok and row is not None and item["recording_session_id"] == capture["archive"]["recording_session_id"] and all(item[key] == row[key] for key in
-            ("source", "recording_session_id", "configuration_sha256", "generation", "time_ns"))
+        return (row is not None and row["time_ns"] == time_ns
+                and item["recording_session_id"] == capture["archive"]["recording_session_id"]
+                and all(item[key] == row[key] for key in
+                    ("source", "recording_session_id", "configuration_sha256", "generation")))
+
+    evidence_ok = bool(event_evidence) and all(row["evidence"] for row in events)
+    evidence_ok = evidence_ok and all(linked(item, item["time_ns"]) for item in event_evidence)
+    for row in relations:
+        if row["usable"]:
+            # Scenario formulas bind temperature. The trigger schema stores
+            # identity only; its event time is carried by the relation row.
+            evidence_ok = (evidence_ok and bool(row["evidence"])
+                           and row["trigger"]["parameter"] == "temperature"
+                           and linked(row["trigger"], row["time_ns"])
+                           and all(item["parameter"] == "temperature" and linked(item, item["time_ns"])
+                                   for item in row["evidence"]))
     check("结果到原始报文的关联", evidence_ok, "每条证据对应本次原始记录和参数", "一致" if evidence_ok else "证据缺失或不匹配", event_evidence[0] if event_evidence else first)
     for identifier, condition in (("scenario-temperature-excess", False), ("scenario-temperature-high", True)):
         declared = next(row for row in relations_document(spec)["relations"] if row["id"] == identifier)

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import QApplication
 
 from .project import write_json
 from .scenario_ui import ScenarioSetupDialog
-from .scenarios import DEFAULT, verify_scenario
+from .scenarios import DEFAULT, validate, verify_scenario
 from .window import MainWindow
 
 
@@ -74,6 +74,14 @@ def main(arguments=None):
         assert window.current_run["scenario"] == spec
 
     try:
+        for key,value in (("kind",[]),("kind",None),("period_ms",0),("duration_ms",801),("baseline_milli",float("nan"))):
+            try:
+                validate({**DEFAULT,key:value})
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("invalid scenario was accepted: "+key)
+        receipt["checks"].append({"name":"invalid_scenario_input_rejected", "passed":True})
         configuration = Path(__file__).resolve().parents[2]/"config/desktop-demo.ini"
         window = MainWindow(args.bin_dir, output/"项目数据", configuration)
         windows.append(window); window.show(); QTest.qWait(80)
