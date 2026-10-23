@@ -285,6 +285,26 @@ void testReordering(BackendConfiguration cfg) {
         throws([&] { service.consume(sample("feedback", 0, 0, 0)); }, "reorder state grew beyond its budget");
     }
 }
+void testLimits(BackendConfiguration cfg) {
+    cfg.consistency.clear(); cfg.responses.clear(); cfg.allowed_lateness_ns = 0;
+    cfg.limits.push_back({"limit", {"control", "command"}, 25});
+    auto sink = std::make_shared<MemorySink>(); ProcessingService service(cfg, sink);
+    service.consume(sample("control", 0, 25, 0));
+    check(service.stats().results == 0, "limit equality is not an exceedance");
+    service.consume(sample("control", 10, 26, 1));
+    service.consume(sample("control", 20, 30, 2));
+    check(count(service, "parameter_above_limit") == 1, "sustained exceedance must not repeat alarms");
+    service.consume(sample("control", 30, 25, 3));
+    check(count(service, "parameter_within_limit") == 1, "return to upper boundary must recover");
+    service.consume(sample("control", 40, 27, 4));
+    auto invalid = sample("control", 50, 0, 5); invalid.valid = false; service.consume(invalid);
+    service.consume(sample("control", 60, 20, 6));
+    check(count(service, "parameter_within_limit") == 1, "invalid input must not fabricate continuous recovery");
+    auto restarted = sample("control", 70, 28, 0); restarted.generation = 2; service.consume(restarted);
+    check(count(service, "parameter_above_limit") == 3, "high first sample of new generation needs an alarm");
+    auto stale = sample("control", 150, 20, 1); stale.generation = 2; service.consume(stale);
+    check(count(service, "parameter_within_limit") == 1, "stale input must not fabricate recovery");
+}
 void testConsistencyAndFixture(const BackendConfiguration& cfg, const std::filesystem::path& output) {
     auto sink = std::make_shared<JsonlAnalysisSink>(output / "fixture_analysis");
     ProcessingService service(cfg, sink); DictionaryDecoder decoder(cfg);
@@ -323,6 +343,7 @@ int main(int argc, char** argv) {
         testConfiguration(argv[1], output); testDictionary(); std::cout << "PASS strict dictionary, bit fields, types, precision and invalid data\n";
         testTime(config); testResponses(config); std::cout << "PASS clock mappings, sequence/time quality, response boundaries, restart, stale data, EOF and uncertainty\n";
         testReordering(config); std::cout << "PASS bounded event-time reordering, 60 source interleavings, deadline watermark, invalid clocks and capacity\n";
+        testLimits(config); std::cout << "PASS upper-limit equality, crossings, recovery, invalid data and epoch boundaries\n";
         testConsistencyAndFixture(config, output); std::cout << "PASS consistency, unit/group boundaries, known 12ms fixture and JSONL output\n";
         std::cout << "ALL PROCESSING TESTS PASSED\nartifacts=" << output.string() << '\n'; return 0;
     } catch (const std::exception& e) { std::cerr << "PROCESSING TEST FAILURE: " << e.what() << '\n'; return 1; }

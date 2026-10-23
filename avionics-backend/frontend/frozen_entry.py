@@ -4,6 +4,9 @@ import sys
 if sys.argv[1:2] == ["--analysis-job"]:
     from ground_station.analysis_job import main
     main(sys.argv[2:])
+elif sys.argv[1:2] == ["--scenario-check"]:
+    from ground_station.scenario_check import main
+    main(sys.argv[2:])
 elif sys.argv[1:2] == ["--release-check"]:
     from ground_station.release_check import main
     main(sys.argv[2:])

@@ -202,6 +202,11 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
             rule.window_ns = milliseconds(take(values, "window_ms"));
             if (rule.tolerance < 0 || !rule.window_ns) throw std::invalid_argument("invalid consistency rule");
             config.consistency.push_back(std::move(rule));
+        } else if (type == "limit") {
+            LimitDefinition rule; rule.id = id;
+            rule.input = selector(values, "input");
+            rule.upper = number<double>(take(values, "upper"));
+            config.limits.push_back(std::move(rule));
         } else if (type == "response") {
             ResponseDefinition rule; rule.id = id;
             rule.command = selector(values, "command"); rule.response = selector(values, "response");
@@ -248,6 +253,7 @@ BackendConfiguration BackendConfiguration::load(const std::filesystem::path& pat
     };
     for (const auto& rule : config.consistency) { validate_selector(rule.left); validate_selector(rule.right); distinct(rule.left, rule.right); }
     for (const auto& rule : config.responses) { validate_selector(rule.command); validate_selector(rule.response); distinct(rule.command, rule.response); }
+    for (const auto& rule : config.limits) validate_selector(rule.input);
     return config;
 }
 void ConfigurationDocument::save(const std::filesystem::path& path) const {

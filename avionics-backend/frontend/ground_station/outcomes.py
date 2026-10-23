@@ -1,6 +1,7 @@
 """Display labels; persisted backend outcome codes remain unchanged."""
-NORMAL_OUTCOMES = ("consistent","response_observed")
+NORMAL_OUTCOMES = ("consistent","response_observed","parameter_within_limit")
 OUTCOME_LABELS = {
+    "parameter_above_limit":"参数越限", "parameter_within_limit":"参数恢复正常",
     "consistent":"一致", "inconsistent":"不一致", "unit_mismatch":"单位不一致",
     "non_numeric_pair":"输入不是数值", "numeric_overflow":"数值溢出",
     "response_observed":"已观测到响应", "response_cancelled":"输入中断，取消判定",

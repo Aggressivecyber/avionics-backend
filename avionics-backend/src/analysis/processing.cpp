@@ -86,7 +86,7 @@ AlignedSample TimeQualityProcessor::process(const ParameterSample& sample) {
 }
 ProcessingService::ProcessingService(BackendConfiguration config, std::shared_ptr<IAnalysisSink> sink)
     : config_(std::move(config)), quality_(config_.clocks, config_.max_parameter_states), sink_(std::move(sink)),
-      pairs_(config_.consistency.size()), responses_(config_.responses.size()) {
+      pairs_(config_.consistency.size()), responses_(config_.responses.size()), limit_previous_(config_.limits.size()) {
     if (!sink_) throw std::invalid_argument("analysis sink is required");
     for (const auto& clock : config_.clocks) {
         known_groups_.insert(clock.group);
@@ -101,6 +101,10 @@ ProcessingService::ProcessingService(BackendConfiguration config, std::shared_pt
         const auto& rule = config_.responses[i];
         responses_by_input_[{rule.command.source, rule.command.parameter}].push_back(i);
         responses_by_input_[{rule.response.source, rule.response.parameter}].push_back(i);
+    }
+    for (std::size_t i = 0; i < config_.limits.size(); ++i) {
+        const auto& input = config_.limits[i].input;
+        limits_by_input_[{input.source, input.parameter}].push_back(i);
     }
 }
 void ProcessingService::emit(CorrelationResult result) {
@@ -167,7 +171,27 @@ void ProcessingService::processAligned(AlignedSample aligned) {
     sink_->sample(aligned);
     ++stats_.samples;
     if (aligned.usable()) ++stats_.usable; else ++stats_.rejected;
-    processConsistency(aligned); processResponse(aligned);
+    processConsistency(aligned); processResponse(aligned); processLimit(aligned);
+}
+void ProcessingService::processLimit(const AlignedSample& sample) {
+    const auto found = limits_by_input_.find({sample.sample.source, sample.sample.parameter_id});
+    if (found == limits_by_input_.end()) return;
+    for (const auto i : found->second) {
+        auto& previous = limit_previous_[i];
+        const auto value = numeric(sample.sample.value);
+        if (!sample.usable() || !value) { previous.reset(); continue; }
+        const auto& rule = config_.limits[i];
+        const bool above = *value > rule.upper;
+        const bool continuous = previous && sameEpoch(previous->sample, sample.sample) &&
+            previous->time_group == sample.time_group && fresh(*previous, *sample.time_ns);
+        const bool was_above = continuous && *numeric(previous->sample.value) > rule.upper;
+        // A first valid high value is an alarm; recovery requires a continuous high baseline.
+        if ((above && !was_above) || (!above && was_above)) {
+            auto result = event(rule.id, above ? "parameter_above_limit" : "parameter_within_limit", sample);
+            result.metric = *value; emit(std::move(result));
+        }
+        previous = sample;
+    }
 }
 void ProcessingService::processConsistency(const AlignedSample& sample) {
     const auto found = consistency_by_input_.find({sample.sample.source, sample.sample.parameter_id});

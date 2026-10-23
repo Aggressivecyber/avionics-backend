@@ -5,17 +5,17 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QComboBox, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMenu, QPushButton, QScrollArea, QVBoxLayout, QWidget)
+    QListWidget, QListWidgetItem, QMenu, QScrollArea, QVBoxLayout, QWidget)
 
 from .ui_assets import icon
-from .widgets import ThinSplitter
+from .widgets import ThinSplitter, MotionButton as QPushButton
 
 
 TITLES = {"dictionary": "字典信息", "parameter": "参数", "protocol": "协议输入",
-          "consistency": "一致性规则", "response": "响应规则", "clock": "时钟映射",
+          "consistency": "一致性规则", "response": "响应规则", "limit": "参数上限规则", "clock": "时钟映射",
           "processing": "处理设置", "pipeline": "队列预算", "capture": "采集超时"}
 GROUPS = [("解析字典", ("dictionary", "parameter", "protocol")),
-          ("分析规则", ("consistency", "response")),
+          ("分析规则", ("consistency", "response", "limit")),
           ("时钟与处理", ("clock", "processing", "pipeline", "capture"))]
 DEFAULTS = {
     "dictionary": {"schema": "2", "version": "project-v1"},
@@ -28,6 +28,7 @@ DEFAULTS = {
         "right_source": "sensor_b", "right_parameter": "temperature_b", "tolerance": "0.25", "window_ms": "5"},
     "response": {"command_source": "control", "command_parameter": "command", "response_source": "feedback",
         "response_parameter": "position", "command_threshold": "0.5", "response_threshold": "0.5", "max_delay_ms": "30"},
+    "limit": {"input_source": "scenario", "input_parameter": "temperature", "upper": "25"},
     "clock": {"domain": "1", "group": "host", "offset_ns": "0", "uncertainty_ns": "0"},
     "processing": {"allowed_lateness_ms": "20", "max_parameter_states": "4096", "max_reorder_samples": "8192"},
     "pipeline": {"queue_frames": "4096", "source_frames": "1024", "analysis_frames": "4096",
@@ -37,6 +38,7 @@ DEFAULTS = {
 OPTIONAL = {"parameter": ("offset", "sequence_step", "valid_bit", "enum_values", "rt_address", "subaddress", "direction"),
             "protocol": ("source",)}
 LABELS = {
+    "input_source": "采集源名称", "input_parameter": "参数名称", "upper": "参数上限",
     "schema": "配置格式版本", "version": "字典版本名称", "source": "采集源名称", "protocol": "协议编号",
     "channel": "通道", "bit_offset": "起始位", "bit_width": "位宽", "byte_order": "字节顺序",
     "type": "数据类型", "scale": "换算系数", "offset": "换算偏移", "unit": "单位",
@@ -55,6 +57,9 @@ LABELS = {
     "max_sources": "采集源数量上限", "command_timeout_ms": "采集命令超时 / ms", "stop_timeout_ms": "停止超时 / ms",
 }
 HELP = {
+    "input_source": "被检查参数所属的采集源，需要与解析字典对应。",
+    "input_parameter": "需要检查上限的参数名称。",
+    "upper": "严格大于上限时记录首次越限；持续越限不重复发出事件。连续有效输入恢复至上限或以下时记录恢复事件。",
     "source": "填采集源的名称，与插件创建的入口对应，例如 sensor_a。",
     "protocol": "软件合成记录使用 65535；1553B 监控记录使用 1553。",
     "bit_offset": "从报文数据区第 0 位开始计数，指定参数从哪里读取。",

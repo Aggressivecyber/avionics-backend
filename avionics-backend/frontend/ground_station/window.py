@@ -14,8 +14,8 @@ from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
     QFormLayout, QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel,
-    QLineEdit, QMainWindow, QPlainTextEdit, QPushButton,
-    QStackedWidget, QStatusBar, QTableView, QTableWidget, QTableWidgetItem,
+    QLineEdit, QMainWindow, QPlainTextEdit,
+    QStatusBar, QTableView, QTableWidget, QTableWidgetItem,
     QTabWidget, QVBoxLayout, QWidget,
 )
 
@@ -26,12 +26,14 @@ from .models import EventModel, ParameterModel, TrendPlot
 from .plugin_center import PluginCenter, ReplaySetupDialog
 from .relations_page import RelationsPage
 from .theme import ACTIVE, ALERT_STYLE, INK, MUTED, NEGATIVE, RUNNING_STYLE, STYLE
-from .widgets import ThinSplitter
+from .widgets import ThinSplitter, MotionButton as QPushButton, MotionStack as QStackedWidget
 from .ui_assets import ASSET_DIR, artwork, icon
 from .project import Project, remember_project, write_json
 from .jobs import start_analysis_process
 from .history_page import HistoryPage
 from .evidence import EvidenceDialog
+from .scenarios import validate as validate_scenario, configuration_text, relations_document, plugin_configuration
+from .scenario_ui import ScenarioSetupDialog, ScenarioResultDialog
 
 
 def label(text, name=None):
@@ -142,6 +144,8 @@ class MainWindow(QMainWindow):
         self.restore_sources = []
         self.capture_after_ready = False
         self.capture_started = False
+        self.pending_scenario = None
+        self.scenario_sealing = False
         self.relation_process = QProcess(self)
         self.relation_buffer = bytearray()
         self.latest_complete = None
@@ -295,6 +299,8 @@ class MainWindow(QMainWindow):
         self.plugin_center = PluginCenter(self.plugin_definitions)
         self.plugin_center.start_requested.connect(self.start_plugin)
         self.plugin_center.stop_requested.connect(self.stop_plugin)
+        self.plugin_center.configure_requested.connect(self.configure_scenario)
+        self.plugin_center.acceptance_requested.connect(self.show_scenario_result)
         self.pages.addWidget(self.plugin_center)
         self.relations_page = RelationsPage(self.event_model, self.data_dir / "relations.json")
         self.relations_page.definitions_changed.connect(self.relations_changed)
@@ -303,6 +309,7 @@ class MainWindow(QMainWindow):
         self.pages.addWidget(self.project_page)
         self.history_page = HistoryPage()
         self.history_page.evidence_requested.connect(self.request_raw_record)
+        self.history_page.acceptance_requested.connect(self.show_scenario_result)
         self.history_page.export_requested.connect(self.export_run)
         self.history_page.idle.connect(self.history_idle)
         self.pages.addWidget(self.history_page)
@@ -789,6 +796,13 @@ class MainWindow(QMainWindow):
                 self.project.set_configuration(configuration)
                 self.restore_sources = self.project.sources(self.bin_dir) if self.capture_after_ready else []
             self.current_run = self.project.new_run()
+            self.scenario_sealing = False
+            if any(source == "scenario" and Path(plugin).stem == "bus_scenario" for source,plugin,config in
+                   self.pending_plugin_sources + self.restore_sources) and "scenario" in self.project.document:
+                self.current_run["scenario"] = dict(self.project.document["scenario"])
+                self.current_run["capture_started"] = False
+                write_json(self.project.resource(self.current_run["archive"]).parent / "scenario.json", self.current_run["scenario"])
+                self.project.save()
             self.capture_started = False
             configuration = self.project.resource(self.project.document["configuration"])
             write_json(self.project.resource(self.current_run["archive"]).parent / "run.json",{**self.current_run,"steps":self.project.document["steps"]})
@@ -839,6 +853,15 @@ class MainWindow(QMainWindow):
             self.client.is_ready, self.busy or self.plugin_action_pending or self.config_editor.dirty or
             self.configuration_process.state() != QProcess.ProcessState.NotRunning, self.client.closing and self.client.active,
             self.disabled_plugins)
+        scenario = self.plugin_center.cards["scenario"]
+        scenario.configure_button.setEnabled(not self.capture_started or not self.client.active)
+        scenario.configure_button.setEnabled(scenario.configure_button.isEnabled() and not self.busy and
+            not (self.client.active and self.client.closing) and not self.config_editor.dirty and self.pending_scenario is None and
+            self.configuration_process.state() == QProcess.ProcessState.NotRunning)
+        scenario.configure_button.setToolTip("本次采集已开始，请先结束并封存再修改场景。" if self.client.active and self.capture_started else
+            "配置可复现场景；保存并准备后，手动点击开始采集。")
+        scenario.acceptance_button.setEnabled(bool(self.project and any(
+            "scenario_acceptance" in run for run in self.project.document["runs"])))
         ready = any(source["status"]["state"] in {"configured", "stopped"}
                     for key, sources in self.plugin_center.sources_by_plugin.items()
                     if key not in self.disabled_plugins for source in sources)
@@ -858,7 +881,7 @@ class MainWindow(QMainWindow):
             self.capture_after_ready = True
             self.new_session()
             return
-        self.capture_started = True
+        self.mark_capture_started()
         self.plugin_action_pending = True
         for key, sources in self.plugin_center.sources_by_plugin.items():
             if key not in self.disabled_plugins:
@@ -869,6 +892,13 @@ class MainWindow(QMainWindow):
         self.set_project_state("启动中", "正在启动已启用且就绪的采集源。")
         self.navigate(0)
         self.refresh_plugins()
+
+    def mark_capture_started(self):
+        self.capture_started = True
+        if "scenario" in self.current_run and not self.current_run["capture_started"]:
+            self.current_run["capture_started"] = True
+            self.project.save()
+            write_json(self.archive.parent / "run.json", {**self.current_run,"steps":self.project.document["steps"]})
 
     def queue_demo_sources(self):
         definition = self.plugin_center.cards["demo"].definition
@@ -885,7 +915,13 @@ class MainWindow(QMainWindow):
 
     def start_plugin(self, definition):
         try:
-            if definition["mode"] == "preset":
+            if definition["mode"] == "scenario":
+                if self.client.active and self.plugin_center.sources_by_plugin["scenario"]:
+                    self.disabled_plugins.discard("scenario")
+                else:
+                    self.configure_scenario(definition)
+                    return
+            elif definition["mode"] == "preset":
                 configuration = Path(__file__).resolve().parents[2] / "config" / definition["configuration"]
                 if (self.client.active or self.configuration_customized) and not self.config_editor.matches_plugin(definition):
                     raise ValueError("当前配置没有此插件对应的参数；请在项目设置选择其配套模板后编辑和保存。运行中的项目需先封存。")
@@ -945,6 +981,66 @@ class MainWindow(QMainWindow):
             self.plugin_action_pending = False
             self.on_error(str(error))
             self.refresh_plugins()
+
+    def configure_scenario(self, definition=None):
+        spec = self.project.document.get("scenario") if self.project else None
+        dialog = ScenarioSetupDialog(spec, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.prepare_scenario(dialog.values())
+
+    def prepare_scenario(self, spec):
+        try:
+            spec = validate_scenario(spec)
+            if self.config_editor.dirty:
+                raise ValueError("请先保存或放弃当前字典修改。")
+            if self.client.active and self.capture_started:
+                raise ValueError("请先结束并封存当前采集，再配置场景。")
+            if self.client.active or self.relation_process.state() != QProcess.ProcessState.NotRunning:
+                self.pending_scenario = spec
+                if self.client.active:
+                    self.end_session()
+                return
+            self.pending_scenario = None
+            self.capture_after_ready = False
+            self.demo_pending = False
+            if not self.apply_root_directory():
+                return
+            configuration = self.data_dir / "config" / ("scenario-" + uuid4().hex + ".ini")
+            configuration.parent.mkdir(parents=True, exist_ok=True)
+            configuration.write_bytes(configuration_text(spec).encode("utf-8"))
+            self.load_configuration(configuration, customized=False)
+            relations = relations_document(spec)
+            if self.project is None:
+                name = self.project_name.text().strip()
+                if not name or re.search(r'[<>:"/\\|?*\x00-\x1f]', name) or name.endswith((".", " ")):
+                    raise ValueError("请在项目设置填写有效的项目名称。")
+                self.project = Project.create(self.data_dir, name, configuration, relations)
+                remember_project(self.workspace_dir / "recent-projects.json", self.project.path)
+                self.update_recent_projects()
+            else:
+                self.project.set_configuration(configuration)
+                write_json(self.project.resource(self.project.document["relations"]), relations)
+            self.project.document["scenario"] = spec
+            source = ("scenario", self.plugin_center.cards["scenario"].definition["path"], plugin_configuration(spec))
+            self.project.save_sources({"scenario":source}, self.bin_dir, set())
+            self.relations_page.load_definitions(self.project.resource(self.project.document["relations"]))
+            self.pending_plugin_sources = [source]
+            self.new_session()
+            self.navigate(2)
+        except (ValueError, OSError) as error:
+            self.on_error("场景准备失败："+str(error))
+
+    def show_scenario_result(self, run=None):
+        if run is None:
+            run = next((row for row in reversed(self.project.document["runs"]) if "scenario_acceptance" in row), None)
+        if run is None:
+            return
+        try:
+            self.scenario_result_dialog = ScenarioResultDialog(self.project.resource(run["analysis"]), self.project.resource(run["archive"]), self)
+            self.scenario_result_dialog.evidence_requested.connect(self.request_raw_record)
+            self.scenario_result_dialog.show()
+        except (OSError, ValueError, KeyError, TypeError) as error:
+            self.on_error("验收结果读取失败："+str(error))
 
     def stop_plugin(self, definition):
         self.plugin_action_pending = True
@@ -1015,7 +1111,7 @@ class MainWindow(QMainWindow):
             elif command == "remove":
                 del self.source_configs[arguments[0]]
             elif command == "start":
-                self.capture_started = True
+                self.mark_capture_started()
             self.log_message(command + " " + (str(arguments[0]) if arguments else "") + " · 完成")
             if command in {"add","replace","remove"} and self.project:
                 self.project.save_sources(self.source_configs,self.bin_dir,self.disabled_plugins)
@@ -1024,6 +1120,13 @@ class MainWindow(QMainWindow):
 
     def on_snapshot(self, snapshot):
         self.latest_snapshot = snapshot
+        if self.current_run and "scenario" in self.current_run and self.capture_started and not self.scenario_sealing and not self.client.closing:
+            spec = self.current_run["scenario"]
+            source = next((row for row in snapshot["sources"] if row["id"] == "scenario"), None)
+            if source and (source["status"]["emitted"] + source["status"]["rejected"] >= spec["duration_ms"]//spec["period_ms"]+1 or
+                           source["status"]["state"] == "faulted"):
+                self.scenario_sealing = True
+                QTimer.singleShot(0, self.end_session)
         if self.capture_after_ready and not self.client.queue and self.source_configs:
             self.capture_after_ready = False
             QTimer.singleShot(0,self.start_capture)
@@ -1486,10 +1589,17 @@ class MainWindow(QMainWindow):
         else:
             self.read_complete_relations()
             self.current_run["relation_status"] = self.latest_complete["status"]
+            if "scenario_acceptance" in self.latest_complete:
+                self.current_run["scenario_acceptance"] = self.latest_complete["scenario_acceptance"]
+                self.message.setText({"passed":"场景验收通过 · 可在插件中心或历史记录查看结果",
+                    "failed":"场景验收未通过 · 请在验收结果中查看差异",
+                    "not_run":"场景未运行 · 本次仅保存准备记录"}[self.latest_complete["scenario_acceptance"]])
             self.project.save()
             self.history_page.set_project(self.project,select_latest=True)
             self.log_message("完整关系结果、历史索引与报告已保存。")
         self.on_active(self.client.active)
+        if self.pending_scenario is not None and not self.client.active and not self.close_pending:
+            self.prepare_scenario(self.pending_scenario)
         if self.close_pending:
             self.close()
 

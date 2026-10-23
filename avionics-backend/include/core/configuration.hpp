@@ -52,6 +52,11 @@ struct ResponseDefinition {
     double command_threshold{}, response_threshold{};
     std::uint64_t max_delay_ns{};
 };
+struct LimitDefinition {
+    std::string id;
+    Selector input;
+    double upper{};
+};
 struct ConfigurationDocument {
     std::string bytes;
     ContentDigest sha256;
@@ -71,6 +76,7 @@ struct BackendConfiguration {
     std::vector<ClockDefinition> clocks;
     std::vector<ConsistencyDefinition> consistency;
     std::vector<ResponseDefinition> responses;
+    std::vector<LimitDefinition> limits;
     static BackendConfiguration load(const std::filesystem::path&);
 };
 class DictionaryDecoder final : public IParameterDecoder {

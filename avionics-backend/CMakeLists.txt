@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(avionics_backend VERSION 0.6.1 LANGUAGES C CXX)
+project(avionics_backend VERSION 0.7.0 LANGUAGES C CXX)
 
 set(AVIONICS_BUILD_REVISION "" CACHE STRING "Commit identity when building a source export without Git")
 if(NOT AVIONICS_BUILD_REVISION)
@@ -72,6 +72,7 @@ function(add_bus_plugin name source)
         VISIBILITY_INLINES_HIDDEN YES)
 endfunction()
 add_bus_plugin(bus_simulated plugins/simulated/simulated_plugin.cpp)
+add_bus_plugin(bus_scenario plugins/scenario/scenario_plugin.cpp)
 add_bus_plugin(bus_replay plugins/replay/replay_plugin.cpp)
 add_bus_plugin(bus_mil1553b_simulated plugins/mil1553b_simulated/mil1553b_plugin.cpp)
 target_link_libraries(bus_replay PRIVATE bus_archive)
@@ -125,6 +126,10 @@ if(BUILD_TESTING)
     add_test(NAME mil1553b_protocol COMMAND mil1553b_tests "${PROJECT_SOURCE_DIR}/config/mil1553b-demo.ini" "${CMAKE_BINARY_DIR}/1553b-test-output")
     if(AVIONICS_TEST_QT_FRONTEND)
         find_package(Python3 REQUIRED COMPONENTS Interpreter)
+        add_test(NAME qt_scenarios COMMAND "${Python3_EXECUTABLE}" -B -m ground_station.scenario_check
+            --bin-dir "$<TARGET_FILE_DIR:bus_backend>" --output "${CMAKE_BINARY_DIR}/scenario-test-output")
+        set_tests_properties(qt_scenarios PROPERTIES TIMEOUT 120 WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}/frontend"
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen;PYTHONDONTWRITEBYTECODE=1")
         add_test(NAME qt_frontend COMMAND "${Python3_EXECUTABLE}" -B
             "${PROJECT_SOURCE_DIR}/frontend/test_frontend.py" --bin-dir "$<TARGET_FILE_DIR:bus_backend>"
             --output "${CMAKE_BINARY_DIR}/frontend-test-output")

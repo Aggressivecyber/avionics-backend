@@ -36,7 +36,7 @@ def main():
         raise RuntimeError("Package requires a clean source tree and binaries built from its exact commit")
     output.mkdir(parents=True, exist_ok=False)
     (output / "bin").mkdir()
-    for name in ("bus_backend.exe", "bus_capture_worker.exe", "bus_analyze.exe", "bus_simulated.dll", "bus_replay.dll", "bus_mil1553b_simulated.dll"):
+    for name in ("bus_backend.exe", "bus_capture_worker.exe", "bus_analyze.exe", "bus_simulated.dll", "bus_scenario.dll", "bus_replay.dll", "bus_mil1553b_simulated.dll"):
         shutil.copy2(build / "bin" / name, output / "bin" / name)
     for name in ("libgcc_s_seh-1.dll", "libstdc++-6.dll", "libwinpthread-1.dll"):
         shutil.copy2(compiler / name, output / "bin" / name)
@@ -61,7 +61,7 @@ def main():
                    cwd=root, check=True, creationflags=flags)
     files = {path.relative_to(output).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
              for path in sorted(output.rglob("*")) if path.is_file()}
-    manifest = {"build": version, "platform": "windows-x64-mingw", "acceptance_scope": "software-architecture-and-synthetic-1553b-monitor",
+    manifest = {"build": version, "platform": "windows-x64-mingw", "acceptance_scope": "software-scenarios-and-synthetic-1553b-monitor",
                 "desktop": {"version": version["version"], "toolkit": "Qt Widgets", "binding": "PySide6", "tested_version": "6.9.2",
                             "python_qt_runtime": "bundled", "runtime":runtime,"launcher": "AEROBUS.exe",
                             "control_schema": 1, "plugin_catalog": "frontend/ground_station/plugins.json",

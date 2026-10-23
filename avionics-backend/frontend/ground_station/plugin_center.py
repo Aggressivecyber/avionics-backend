@@ -4,17 +4,20 @@ import re
 
 from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QFrame,
-    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QPushButton, QScrollArea,
+    QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QScrollArea,
     QSpinBox, QVBoxLayout, QWidget)
 
-from .theme import ALERT_STYLE, RUNNING_STYLE
+from .theme import ACTIVE, MUTED, ALERT_STYLE, RUNNING_STYLE
 from .ui_assets import artwork, icon
+from .widgets import MotionButton as QPushButton, FeedbackLabel
 
 
 class PluginCard(QFrame):
     start_requested = Signal(object)
     stop_requested = Signal(object)
     details_requested = Signal(object)
+    configure_requested = Signal(object)
+    acceptance_requested = Signal()
 
     def __init__(self, definition, parent=None):
         super().__init__(parent)
@@ -28,7 +31,7 @@ class PluginCard(QFrame):
         category.setObjectName("muted")
         top.addWidget(category)
         top.addStretch()
-        self.status = QLabel("未启用")
+        self.status = FeedbackLabel("未启用")
         self.status.setObjectName("badge")
         top.addWidget(self.status)
         layout.addLayout(top)
@@ -72,6 +75,17 @@ class PluginCard(QFrame):
         for action in (self.start_button, self.stop_button, self.details_button):
             actions.addWidget(action)
         layout.addLayout(actions)
+        if definition["mode"] == "scenario":
+            tools = QHBoxLayout()
+            self.configure_button = QPushButton("配置场景")
+            self.configure_button.setToolTip("设置正常运行、参数越限或响应超时场景；保存后准备插件，仍需手动开始采集。")
+            self.configure_button.clicked.connect(lambda:self.configure_requested.emit(definition))
+            self.acceptance_button = QPushButton("验收结果")
+            self.acceptance_button.setToolTip("打开本项目最近一次场景验收；每项检查可查看预期、实际结果及原始报文。")
+            self.acceptance_button.clicked.connect(self.acceptance_requested)
+            self.acceptance_button.setEnabled(False)
+            tools.addWidget(self.configure_button); tools.addWidget(self.acceptance_button)
+            layout.addLayout(tools)
 
 
 class PluginDetailsDialog(QDialog):
@@ -158,6 +172,8 @@ class ReplaySetupDialog(QDialog):
 class PluginCenter(QWidget):
     start_requested = Signal(object)
     stop_requested = Signal(object)
+    configure_requested = Signal(object)
+    acceptance_requested = Signal()
 
     def __init__(self, definitions, parent=None):
         super().__init__(parent)
@@ -194,6 +210,8 @@ class PluginCenter(QWidget):
         card.start_requested.connect(self.start_requested)
         card.stop_requested.connect(self.stop_requested)
         card.details_requested.connect(self.show_details)
+        card.configure_requested.connect(self.configure_requested)
+        card.acceptance_requested.connect(self.acceptance_requested)
         index = len(self.cards)
         self.cards[definition["id"]] = card
         self.grid.addWidget(card, index // 2, index % 2)
@@ -232,9 +250,9 @@ class PluginCenter(QWidget):
             card.status.setText("文件缺失" if not exists else "故障" if faulted else
                 "停用中" if disabled and running else "采集中" if running else
                 "已停用" if disabled else "等待中" if sources else "未启用")
-            card.status.setStyleSheet(ALERT_STYLE if faulted or not exists else RUNNING_STYLE if running else "")
+            card.status.setStyleSheet(ALERT_STYLE if faulted or not exists else RUNNING_STYLE if running else f"background:{ACTIVE};color:{MUTED};")
             card.runtime.setText(f"采集源 {len(sources)} 个 · 已记录 {sum(source['recorded'] for source in sources):,} 帧" if sources else
                 "启用插件后就绪，由左下角“开始采集”按钮开始采集。")
-            available = exists and not busy and not closing and (not active or ready)
+            available = exists and not busy and (not active or (ready and not closing))
             card.start_button.setEnabled(available and (not sources or disabled))
             card.stop_button.setEnabled(available and bool(sources) and not disabled)

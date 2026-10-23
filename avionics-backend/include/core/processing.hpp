@@ -79,6 +79,7 @@ private:
     };
     void processConsistency(const AlignedSample&);
     void processResponse(const AlignedSample&);
+    void processLimit(const AlignedSample&);
     void processAligned(AlignedSample);
     using PendingKey = std::tuple<std::uint64_t, std::string, std::string, std::uint64_t,
         std::uint64_t, std::uint64_t, std::uint64_t>;
@@ -97,6 +98,8 @@ private:
     std::shared_ptr<IAnalysisSink> sink_;
     std::vector<PairState> pairs_;
     std::vector<ResponseState> responses_;
+    std::vector<std::optional<AlignedSample>> limit_previous_;
+    std::map<std::pair<std::string, std::string>, std::vector<std::size_t>> limits_by_input_;
     std::map<std::pair<std::string, std::string>, std::vector<std::size_t>> consistency_by_input_, responses_by_input_;
     std::map<std::string, std::set<std::pair<std::uint64_t, std::size_t>>> deadlines_;
     std::map<std::pair<std::string, std::string>, std::uint64_t> response_clock_uncertainty_;

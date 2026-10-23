@@ -9,11 +9,11 @@ from PySide6.QtCore import QPointF, QRectF, Qt, QThread, Signal, Slot
 from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (QAbstractSpinBox, QCheckBox, QComboBox, QDoubleSpinBox, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit,
-    QPushButton, QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
+    QTableWidget, QTableWidgetItem, QTabWidget, QVBoxLayout, QWidget)
 
 from .project import write_json
 from .theme import ACCENT, BORDER, INK, MUTED
-from .widgets import ThinSplitter
+from .widgets import ThinSplitter, MotionButton as QPushButton
 from .analysis_job import preview_points
 from .outcomes import OUTCOME_LABELS
 
@@ -40,7 +40,7 @@ class HistoryQuery(QThread):
                 duration = max(0, ((high or anchor) - anchor) / 1e9)
                 if end <= start:
                     start, end = 0, max(duration, .001)
-                clause = " AND outcome NOT IN ('consistent','response_observed')" if anomalies else ""
+                clause = " AND outcome NOT IN ('consistent','response_observed','parameter_within_limit')" if anomalies else ""
                 total = db.execute("SELECT count(*) FROM events WHERE json_extract(payload,'$.time_group')=? AND t BETWEEN ? AND ?" + clause,
                                    (group,anchor + round(start*1e9), anchor + round(end*1e9))).fetchone()[0]
                 events = [json.loads(r[0]) for r in db.execute("SELECT payload FROM events WHERE json_extract(payload,'$.time_group')=? AND t BETWEEN ? AND ?" + clause +
@@ -157,6 +157,7 @@ class HistoryPlot(QWidget):
 
 
 class HistoryPage(QWidget):
+    acceptance_requested = Signal(object)
     evidence_requested = Signal(object, object)
     export_requested = Signal(object)
     idle = Signal()
@@ -179,7 +180,11 @@ class HistoryPage(QWidget):
         for text,widget in (("采集记录",self.runs),("比较",self.compare),("时基",self.group)):
             toolbar.addWidget(QLabel(text)); toolbar.addWidget(widget,1)
         self.refresh_button = QPushButton("刷新"); self.refresh_button.clicked.connect(self.reload)
-        toolbar.addWidget(self.refresh_button); layout.addLayout(toolbar)
+        self.acceptance_button = QPushButton("场景验收")
+        self.acceptance_button.setToolTip("查看所选采集记录的场景验收结果及对应原始报文。")
+        self.acceptance_button.setEnabled(False)
+        self.acceptance_button.clicked.connect(lambda:self.acceptance_requested.emit(self.runs.currentData()))
+        toolbar.addWidget(self.acceptance_button); toolbar.addWidget(self.refresh_button); layout.addLayout(toolbar)
         self.status = QLabel("打开项目后选择采集记录。")
         self.status.setWordWrap(True); layout.addWidget(self.status)
         self.tabs = QTabWidget(); layout.addWidget(self.tabs,1)
@@ -261,6 +266,7 @@ class HistoryPage(QWidget):
         self.parameters.blockSignals(True); self.parameters.clear(); self.parameters.blockSignals(False)
         self.start.setValue(0); self.end.setValue(0)
         run = self.runs.currentData()
+        self.acceptance_button.setEnabled(bool(run and "scenario_acceptance" in run))
         if run:
             self.run_label.setText(run["label"]); self.notes.setPlainText(run["notes"])
             self.steps.setPlainText("\n".join(self.project.document["steps"]))

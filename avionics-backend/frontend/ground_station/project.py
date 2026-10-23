@@ -76,6 +76,9 @@ class Project:
                 raise ValueError("项目插件路径类型无效。")
             if location == "project":
                 project.resource(source["plugin"])
+        if "scenario" in document:
+            from .scenarios import validate
+            validate(document["scenario"])
         for key in ("configuration", "relations"):
             if not project.resource(document[key]).is_file():
                 raise ValueError("项目资源不存在：" + document[key])

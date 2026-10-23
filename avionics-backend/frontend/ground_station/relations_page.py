@@ -3,12 +3,12 @@ import json
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (QAbstractItemView, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFrame, QGridLayout, QHBoxLayout, QHeaderView, QLabel, QLineEdit, QPlainTextEdit,
-    QPushButton, QTableView, QTableWidget, QTableWidgetItem, QTabWidget,
+    QTableView, QTableWidget, QTableWidgetItem, QTabWidget,
     QSizePolicy, QVBoxLayout, QWidget)
 
 from .models import ParameterModel, TrendPlot, display_value
 from .relations import RelationEngine
-from .widgets import ThinSplitter
+from .widgets import ThinSplitter, MotionButton as QPushButton
 from .ui_assets import icon
 
 

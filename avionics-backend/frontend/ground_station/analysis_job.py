@@ -103,7 +103,7 @@ def export_report(directory, metadata, export_csv=False):
                           f'<text x="40" y="16">{y0:.6g} .. {y1:.6g}</text></svg>')
         steps = "".join(f"<li>{html.escape(step)}</li>" for step in run.get("steps", []))
         anomalies = []
-        for text, in db.execute("SELECT payload FROM events WHERE outcome NOT IN ('consistent','response_observed') ORDER BY seq LIMIT 100"):
+        for text, in db.execute("SELECT payload FROM events WHERE outcome NOT IN ('consistent','response_observed','parameter_within_limit') ORDER BY seq LIMIT 100"):
             event = json.loads(text)
             evidence = ", ".join(f"{e['source']} / #{e['record_index']}" for e in event["evidence"])
             anomalies.append(f"<tr><td>{html.escape(event['rule'])}</td><td>{html.escape(OUTCOME_LABELS[event['outcome']])}</td>"
@@ -111,9 +111,10 @@ def export_report(directory, metadata, export_csv=False):
         archive = html.escape(run.get("archive",metadata["archive"]))
         build_text = html.escape(encode(metadata["build"]))
         state = "完整参数计算完成" if metadata["status"] == "complete" else "输入未完整结束，结果供诊断"
+        acceptance_link = '<p><a href="acceptance.html">查看场景验收：预期与实际逐项比对</a></p>' if (directory / "acceptance.html").exists() else ""
         content = f"""<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>AEROBUS 试验报告</title>
 <style>body{{font:15px 'Microsoft YaHei UI',sans-serif;color:#20292e;max-width:1000px;margin:44px auto;padding:0 24px}}h1{{font-size:28px}}h2{{font-size:19px;margin-top:32px}}table{{border-collapse:collapse;width:100%}}td,th{{text-align:left;padding:10px;border-bottom:1px solid #e4e8ea}}code{{overflow-wrap:anywhere}}p{{line-height:1.7}}svg{{width:100%;max-height:230px}}.meta{{color:#566770;overflow-wrap:anywhere}}@media print{{body{{margin:0}}h2{{break-after:avoid}}tr,svg{{break-inside:avoid}}}}</style>
-<h1>AEROBUS · {html.escape(run['label'])}</h1><p>{state}。软件合成数据与真实设备试验需分别标识；记录完整不等于所有试验判据通过。</p>
+<h1>AEROBUS · {html.escape(run['label'])}</h1><p>{state}。软件合成数据与真实设备试验需分别标识；记录完整不等于所有试验判据通过。</p>{acceptance_link}
 <p>参数样本：{metadata['samples']}；关系计算记录：{metadata['results']}；后端事件：{metadata['events']}。</p>
 <h2>试验步骤与人工备注</h2><ol>{steps}</ol><p>{html.escape(run.get('notes','')).replace(chr(10),'<br>')}</p>
 <h2>后端判据统计</h2><table><tr><th>结果</th><th>次数</th></tr>{rows}</table>
@@ -251,6 +252,12 @@ def run_analysis(input_analysis, definitions, output, archive, follow=False):
         with (output / "history.sqlite").open("rb") as stream:
             metadata["index_sha256"] = hashlib.file_digest(stream,"sha256").hexdigest()
         write_json(output / "summary.json", metadata)
+        scenario = Path(archive).parent / "scenario.json"
+        if scenario.exists():
+            from .scenarios import verify_scenario
+            acceptance = verify_scenario(json.loads(scenario.read_text(encoding="utf-8")), input_analysis, output, archive, metadata)
+            metadata["scenario_acceptance"] = "not_run" if acceptance["passed"] is None else "passed" if acceptance["passed"] else "failed"
+            write_json(output / "summary.json", metadata)
         export_report(output, metadata)
         return metadata
     finally:
